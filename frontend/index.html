@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NovaCart</title>
+  <link rel="stylesheet" href="styles.css?v=5">
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <p class="eyebrow">NovaCart</p>
+      <h1>Build, tweak, and ship a living storefront.</h1>
+      <p class="lede">A compact commerce demo where the catalog, cart, promo code, and checkout flow all react as you click.</p>
+      <div class="status-card">
+        <span class="status-label">Status</span>
+        <p id="status">Loading products...</p>
+      </div>
+    </section>
+
+    <section class="catalog">
+      <div class="catalog-header">
+        <div>
+          <h2>Featured products</h2>
+          <p>What the backend returns is what the browser shows.</p>
+        </div>
+        <div class="catalog-meta">
+          <span class="meta-chip">Interactive demo</span>
+          <span class="meta-chip">Add and remove items</span>
+        </div>
+      </div>
+
+      <div class="catalog-layout">
+        <section id="products" class="product-grid" aria-live="polite"></section>
+
+        <aside class="cart-panel" aria-label="Shopping cart summary">
+          <div class="cart-panel-header">
+            <div>
+              <p class="cart-kicker">Cart</p>
+              <h3>Build your starter stack</h3>
+            </div>
+            <button id="clear-cart" class="ghost-button" type="button">Clear</button>
+          </div>
+
+          <div id="cart-empty" class="cart-empty">
+            Add a few items to see the summary update here.
+          </div>
+
+          <ul id="cart-items" class="cart-items" aria-live="polite"></ul>
+
+          <div class="cart-footer">
+            <div>
+              <span class="cart-total-label">Total</span>
+              <strong id="cart-total">€0.00</strong>
+            </div>
+            <div class="cart-footer-actions">
+              <p id="cart-count" class="cart-count">0 items</p>
+              <button id="open-checkout" class="checkout-button" type="button">Checkout</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <div id="checkout-backdrop" class="checkout-backdrop" hidden></div>
+  <aside id="checkout-drawer" class="checkout-drawer" aria-label="Checkout drawer" aria-hidden="true">
+    <div class="checkout-drawer-header">
+      <div>
+        <p class="cart-kicker">Checkout</p>
+        <h3>Review your order</h3>
+      </div>
+      <button id="close-checkout" class="ghost-button" type="button">Close</button>
+    </div>
+
+    <div class="checkout-summary">
+      <div class="summary-row">
+        <span>Subtotal</span>
+        <strong id="checkout-subtotal">€0.00</strong>
+      </div>
+      <div class="summary-row">
+        <span>Discount</span>
+        <strong id="checkout-discount">-€0.00</strong>
+      </div>
+      <div class="summary-row summary-row-total">
+        <span>Total</span>
+        <strong id="checkout-total">€0.00</strong>
+      </div>
+    </div>
+
+    <form id="promo-form" class="promo-form">
+      <label class="promo-label" for="promo-code">Promo code</label>
+      <div class="promo-row">
+        <input id="promo-code" name="promo-code" type="text" placeholder="Try DEVOPS10" autocomplete="off">
+        <button class="checkout-button" type="submit">Apply</button>
+      </div>
+      <p id="promo-message" class="promo-message">Try `DEVOPS10`, `NOVA15`, or `SHIPFREE`.</p>
+    </form>
+
+    <button id="place-order" class="place-order-button" type="button">Place test order</button>
+    <div id="order-confirmation" class="order-confirmation" hidden></div>
+
+    <section class="order-history">
+      <div class="order-history-header">
+        <div>
+          <p class="cart-kicker">Saved orders</p>
+          <h3>Recently placed</h3>
+        </div>
+        <button id="refresh-orders" class="ghost-button" type="button">Refresh</button>
+      </div>
+      <ul id="order-history-list" class="order-history-list"></ul>
+    </section>
+  </aside>
+  <script src="app.js?v=5"></script>
+</body>
+</html>
