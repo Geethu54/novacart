@@ -1,0 +1,54 @@
+name: Auto Tag Main on Merge
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    # Only run when the push to main came from a merged PR, not a direct commit
+    if: github.event.head_commit.message != '' && contains(github.event.head_commit.message, 'Merge pull request') || github.event.forced == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute base tag (Prod-yy.mm.week)
+        id: compute_tag
+        run: |
+          YEAR=$(date +'%y')
+          MONTH=$(date +'%m')
+          # ISO week of year (01-53), per ISO-8601
+          WEEK=$(date +'%V')
+          BASE_TAG="Prod-${YEAR}.${MONTH}.${WEEK}"
+          echo "base_tag=$BASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve unique tag (handle same-week collisions)
+        id: resolve_tag
+        run: |
+          BASE_TAG="${{ steps.compute_tag.outputs.base_tag }}"
+          if ! git rev-parse "$BASE_TAG" >/dev/null 2>&1; then
+            echo "final_tag=$BASE_TAG" >> "$GITHUB_OUTPUT"
+          else
+            SUFFIX=1
+            while git rev-parse "${BASE_TAG}.${SUFFIX}" >/dev/null 2>&1; do
+              SUFFIX=$((SUFFIX + 1))
+            done
+            echo "final_tag=${BASE_TAG}.${SUFFIX}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push tag
+        run: |
+          FINAL_TAG="${{ steps.resolve_tag.outputs.final_tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$FINAL_TAG" -m "Auto-tagged on merge to main: $FINAL_TAG"
+          git push origin "$FINAL_TAG"
+          echo "Created tag: $FINAL_TAG"
