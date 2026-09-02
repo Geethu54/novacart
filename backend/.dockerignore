@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+penv/
+.git
+.env
+.pytest_cache/
+novacart.db
+backend/
