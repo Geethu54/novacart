@@ -1,0 +1,66 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+
+  build-validate:
+    name: build validation for backend
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Scan repo for any password or secret leaks
+      uses: gitleaks/gitleaks-action@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITLEAKS_ENABLE_COMMENTS: false
+        GITLEAKS_ENABLE_UPLOAD_ARTIFACT: false
+        GITLEAKS_ENABLE_SUMMARY: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: dependency check for backend
+      working-directory: backend
+      run: pip install --no-cache-dir -r requirements.txt
+
+    - name: check for syntax errors
+      working-directory: backend
+      run: python -m py_compile app/main.py
+
+    - name: Syntax check for frontend JS
+      working-directory: frontend
+      run: node --check app.js
+
+  test:
+    name: Application tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install test dependencies (includes app dependencies)
+      working-directory: backend
+      run: pip install --no-cache-dir -r tests/test-requirements.txt
+
+    - name: Run backend tests
+      working-directory: backend
+      run: python -m pytest -v
+
+  docker-build:
+    name: checking docker build errors
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build backend image
+      run: docker build -t novacart-backend-ci-check ./backend
+
+    - name: Build frontend image
+      run: docker build -t novacart-frontend-ci-check ./frontend
