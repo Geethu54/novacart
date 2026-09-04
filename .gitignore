@@ -227,3 +227,4 @@ backend/.pytest_cache
 backend/.coverage
 backend/.hypothesis
 backend/novacart.db 
+.env
