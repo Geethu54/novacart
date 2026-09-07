@@ -64,3 +64,39 @@ jobs:
 
     - name: Build frontend image
       run: docker build -t novacart-frontend-ci-check ./frontend
+
+  compose-healthcheck:
+    name: validate compose healthchecks
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Create CI .env file
+      run: |
+        cat <<EOF > .env
+        POSTGRES_USER=ci_user
+        POSTGRES_PASSWORD=ci_password
+        POSTGRES_DB=ci_db
+        EOF
+
+    - name: Build and start services
+      run: docker compose up -d --build
+
+    - name: Check backend /health and /ready
+      run: |
+        for i in $(seq 1 30); do
+          if curl -fsS http://localhost:8000/health && curl -fsS http://localhost:8000/ready; then
+            echo "Backend is healthy and ready."
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "Backend did not become healthy/ready in time."
+        docker compose ps
+        docker compose logs
+        exit 1
+        exit 1
+
+    - name: Tear down services
+      if: always()
+      run: docker compose down -v
