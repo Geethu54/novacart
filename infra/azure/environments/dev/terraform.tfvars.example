@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars (git-ignored) and fill in real values, or set the
+# equivalent TF_VAR_* environment variables instead of committing secrets.
+
+project     = "novacart"
+environment = "dev"
+location    = "eastus"
+
+tags = {
+  owner = "devops-cohort"
+}
+
+# Required, no default: set via terraform.tfvars (git-ignored) or
+# TF_VAR_postgres_administrator_password. Never commit a real password.
+# postgres_administrator_password = "REPLACE_ME"
+
+postgres_administrator_login = "novacartadmin"
+postgres_database_name       = "novacart"
