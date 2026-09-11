@@ -13,9 +13,26 @@ variable "environment" {
 }
 
 variable "location" {
-  description = "Azure region every resource in this environment is created in."
+  description = "Azure region every resource in this environment is created in, except Postgres if postgres_location overrides it (see below)."
   type        = string
   default     = "eastus"
+}
+
+variable "postgres_location" {
+  description = <<-EOT
+    Azure region for the PostgreSQL Flexible Server, if different from
+    `location`. Some subscriptions (seen on a trial/PAYG subscription) have
+    Flexible Server provisioning restricted in specific regions -- e.g.
+    eastus can return `ParameterOutOfRange: The value of the 'Version'
+    should be in: []` even though every other service in this environment
+    works fine there. Check with:
+      az postgres flexible-server list-skus --location <region>
+    and look for a `"reason": "Provisioning is restricted in this
+    region..."` on the top-level capability. Defaults to `location` so this
+    only needs setting when that restriction actually applies.
+  EOT
+  type    = string
+  default = null
 }
 
 variable "tags" {
@@ -97,4 +114,28 @@ variable "postgres_allowed_cidr_ranges" {
       end_ip   = "255.255.255.255"
     }
   ]
+}
+
+# --- Application containers --------------------------------------------------
+
+variable "backend_image_tag" {
+  description = <<-EOT
+    Tag of the backend image in ACR to deploy (e.g. a git SHA), pushed ahead
+    of `terraform apply` with:
+      az acr build --registry <acr-name> --image novacart-backend:<tag> ./backend
+    No default: every apply must name a specific, known image rather than
+    silently reusing whatever "latest" happens to point at.
+  EOT
+  type = string
+}
+
+variable "frontend_image_tag" {
+  description = <<-EOT
+    Tag of the frontend image in ACR to deploy (e.g. a git SHA), pushed ahead
+    of `terraform apply` with:
+      az acr build --registry <acr-name> --image novacart-frontend:<tag> ./frontend
+    No default: every apply must name a specific, known image rather than
+    silently reusing whatever "latest" happens to point at.
+  EOT
+  type = string
 }

@@ -15,3 +15,11 @@ tags = {
 
 postgres_administrator_login = "novacartadmin"
 postgres_database_name       = "novacart"
+
+# Build and push images first, then set the tags you pushed:
+#   az acr build --registry <acr-name> --image novacart-backend:dev-1 ./backend
+#   az acr build --registry <acr-name> --image novacart-frontend:dev-1 ./frontend
+# (the ACR name is only known after the first apply that creates it -- see
+# the container_registry_login_server output)
+backend_image_tag  = "REPLACE_ME"
+frontend_image_tag = "REPLACE_ME"
