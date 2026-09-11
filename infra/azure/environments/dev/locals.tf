@@ -6,6 +6,8 @@
 locals {
   name_prefix = "${var.project}-${var.environment}"
 
+  postgres_location = coalesce(var.postgres_location, var.location)
+
   tags = merge(
     {
       project     = var.project

@@ -42,3 +42,18 @@ output "postgres_administrator_login" {
   description = "Administrator username for the dev PostgreSQL server (the password is never emitted as an output)."
   value       = module.postgresql.administrator_login
 }
+
+output "container_registry_login_server" {
+  description = "ACR login server. Build/push images here before applying, e.g. `az acr build --registry <name> --image novacart-backend:<tag> ./backend`."
+  value       = module.container_registry.login_server
+}
+
+output "frontend_fqdn" {
+  description = "Public FQDN of the frontend Container App -- the development environment's browser-facing endpoint."
+  value       = module.frontend_app.fqdn
+}
+
+output "backend_internal_fqdn" {
+  description = "Internal-only FQDN of the backend Container App. Reachable from other apps in the same Container Apps Environment (the frontend's nginx proxy) but not from the public internet."
+  value       = module.backend_app.fqdn
+}

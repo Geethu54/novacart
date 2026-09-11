@@ -1,0 +1,47 @@
+server {
+    listen 80;
+    server_name _;
+ 
+    root /usr/share/nginx/html;
+    index index.html;
+ 
+    # Forward any /api/* request to the backend.
+    # BACKEND_INTERNAL_URL is substituted at container startup by nginx's
+    # built-in envsubst-on-templates entrypoint hook (see Dockerfile).
+    # Locally/in docker-compose it defaults to http://backend:8000, the
+    # Docker network alias; in Azure it's the backend Container App's
+    # internal FQDN, set via Terraform.
+    location /api/ {
+        proxy_pass ${BACKEND_INTERNAL_URL}/api/;
+
+        # Azure Container Apps' internal ingress routes by SNI (many apps
+        # share one internal IP); nginx doesn't send SNI to an https://
+        # upstream unless told to, so without this the TLS handshake gets
+        # reset by Azure's proxy before any HTTP request is even sent.
+        proxy_ssl_server_name on;
+
+        # nginx defaults to HTTP/1.0 for proxied requests, which also
+        # defaults Connection to "close". Pin 1.1 and clear Connection
+        # explicitly -- otherwise a stray Connection/Upgrade header
+        # anywhere in the chain can trip nginx's built-in upgrade handling
+        # and it responds 426 Upgrade Required instead of proxying at all.
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+
+        # Deliberately not overridden to $host (the frontend's own
+        # hostname): nginx's default of $proxy_host sends the backend's own
+        # FQDN, which is what Azure's ingress expects to route on past the
+        # TLS layer.
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+ 
+    # Serve static files directly; fall back to index.html for
+    # any unmatched route.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+ 
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+}
