@@ -117,12 +117,12 @@ resource "azurerm_role_assignment" "acr_pull" {
 module "backend_app" {
   source = "../../modules/container_app"
 
-  name                          = "ca-${local.name_prefix}-backend"
-  location                      = module.resource_group.location
-  resource_group_name           = module.resource_group.name
-  container_app_environment_id  = module.container_apps_environment.id
-  registry_server               = module.container_registry.login_server
-  acr_pull_identity_id          = azurerm_user_assigned_identity.acr_pull.id
+  name                         = "ca-${local.name_prefix}-backend"
+  location                     = module.resource_group.location
+  resource_group_name          = module.resource_group.name
+  container_app_environment_id = module.container_apps_environment.id
+  registry_server              = module.container_registry.login_server
+  acr_pull_identity_id         = azurerm_user_assigned_identity.acr_pull.id
 
   image       = "${module.container_registry.login_server}/novacart-backend:${var.backend_image_tag}"
   target_port = 8000
@@ -148,12 +148,12 @@ module "backend_app" {
 module "frontend_app" {
   source = "../../modules/container_app"
 
-  name                          = "ca-${local.name_prefix}-frontend"
-  location                      = module.resource_group.location
-  resource_group_name           = module.resource_group.name
-  container_app_environment_id  = module.container_apps_environment.id
-  registry_server               = module.container_registry.login_server
-  acr_pull_identity_id          = azurerm_user_assigned_identity.acr_pull.id
+  name                         = "ca-${local.name_prefix}-frontend"
+  location                     = module.resource_group.location
+  resource_group_name          = module.resource_group.name
+  container_app_environment_id = module.container_apps_environment.id
+  registry_server              = module.container_registry.login_server
+  acr_pull_identity_id         = azurerm_user_assigned_identity.acr_pull.id
 
   image       = "${module.container_registry.login_server}/novacart-frontend:${var.frontend_image_tag}"
   target_port = 80

@@ -31,8 +31,8 @@ variable "postgres_location" {
     region..."` on the top-level capability. Defaults to `location` so this
     only needs setting when that restriction actually applies.
   EOT
-  type    = string
-  default = null
+  type        = string
+  default     = null
 }
 
 variable "tags" {
@@ -126,7 +126,7 @@ variable "backend_image_tag" {
     No default: every apply must name a specific, known image rather than
     silently reusing whatever "latest" happens to point at.
   EOT
-  type = string
+  type        = string
 }
 
 variable "frontend_image_tag" {
@@ -137,5 +137,5 @@ variable "frontend_image_tag" {
     No default: every apply must name a specific, known image rather than
     silently reusing whatever "latest" happens to point at.
   EOT
-  type = string
+  type        = string
 }

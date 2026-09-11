@@ -86,7 +86,7 @@ variable "acr_pull_identity_id" {
     expired". A pre-existing, pre-authorized identity avoids the ordering
     problem entirely.
   EOT
-  type = string
+  type        = string
 }
 
 variable "tags" {
