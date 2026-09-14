@@ -109,6 +109,47 @@ public path: there is no longer an IP-based firewall allowlist standing
 between "the internet" and the database, because there is no longer a
 route from the internet to the database at all.
 
+## Deploy sequence
+
+`delegated_subnet_id`/`private_dns_zone_id` on Postgres and
+`infrastructure_subnet_id` on the Container Apps Environment can only be
+set at creation time (see "Operational note" below), and the Container Apps
+need images already sitting in ACR before Azure will let them be created --
+so a from-scratch deploy can't be a single `terraform apply`. Run these in
+order from `infra/azure/environments/dev`:
+
+```bash
+# 1. DB password (not stored anywhere in the repo).
+export TF_VAR_postgres_administrator_password='<your-password>'
+
+# 2. Everything except the two Container Apps: resource group, VNet/private
+#    networking, Postgres, the VNet-integrated Container Apps Environment,
+#    ACR, and the ACR-pull identity. Targeted so it doesn't fail trying to
+#    pull images that don't exist in ACR yet. Postgres alone can take
+#    10-15 minutes.
+terraform apply \
+  -target=module.resource_group \
+  -target=module.networking \
+  -target=module.log_analytics \
+  -target=module.postgresql \
+  -target=module.container_apps_environment \
+  -target=module.container_registry \
+  -target=azurerm_user_assigned_identity.acr_pull \
+  -target=azurerm_role_assignment.acr_pull
+
+# 3. Build and push both images into the now-existing ACR.
+ACR_NAME=$(terraform output -raw container_registry_name)
+az acr build --registry "$ACR_NAME" --image novacart-backend:dev-1 ../../../../backend
+az acr build --registry "$ACR_NAME" --image novacart-frontend:dev-1 ../../../../frontend
+
+# 4. Create the two Container Apps, now that the images they reference exist.
+terraform apply
+
+# 5. Smoke test.
+curl -sS "https://$(terraform output -raw frontend_fqdn)/"
+curl -sS "https://$(terraform output -raw frontend_fqdn)/api/products"
+```
+
 ## Verifying the database is no longer public
 
 After `terraform apply`:
