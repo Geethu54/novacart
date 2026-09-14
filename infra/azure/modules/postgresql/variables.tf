@@ -54,9 +54,30 @@ variable "database_name" {
 }
 
 variable "public_network_access_enabled" {
-  description = "Whether the server is reachable over the public internet. This environment intentionally has no private networking, so this stays true here."
+  description = "Whether the server is reachable over the public internet. Ignored (forced to false) once delegated_subnet_id is set -- see main.tf. Defaults to false: private-by-default, so a caller that forgets to set this explicitly doesn't end up with an accidentally-public server."
   type        = bool
-  default     = true
+  default     = false
+}
+
+variable "delegated_subnet_id" {
+  description = <<-EOT
+    Resource ID of a subnet delegated to Microsoft.DBforPostgreSQL/flexibleServers.
+    When set, the server is created with a private IP in this subnet instead
+    of a public endpoint (VNet-integrated / private access). Requires
+    private_dns_zone_id to also be set. Leave null for public access.
+  EOT
+  type        = string
+  default     = null
+}
+
+variable "private_dns_zone_id" {
+  description = <<-EOT
+    Resource ID of the private DNS zone (name must end in
+    .postgres.database.azure.com) the server registers its FQDN in. Required
+    when delegated_subnet_id is set; ignored otherwise.
+  EOT
+  type        = string
+  default     = null
 }
 
 variable "allowed_cidr_ranges" {
