@@ -18,6 +18,17 @@ variable "log_analytics_workspace_id" {
   type        = string
 }
 
+variable "infrastructure_subnet_id" {
+  description = <<-EOT
+    Resource ID of a subnet the environment VNet-integrates into, giving
+    every Container App in it a private address in that subnet. Leave null
+    to keep the environment un-integrated (no route to VNet-only
+    resources).
+  EOT
+  type        = string
+  default     = null
+}
+
 variable "tags" {
   description = "Tags applied to the environment."
   type        = map(string)

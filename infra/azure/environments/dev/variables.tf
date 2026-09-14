@@ -31,8 +31,8 @@ variable "postgres_location" {
     region..."` on the top-level capability. Defaults to `location` so this
     only needs setting when that restriction actually applies.
   EOT
-  type    = string
-  default = null
+  type        = string
+  default     = null
 }
 
 variable "tags" {
@@ -95,25 +95,19 @@ variable "postgres_database_name" {
 
 variable "postgres_allowed_cidr_ranges" {
   description = <<-EOT
-    Firewall rules opened on the dev PostgreSQL server. This environment is
-    the public development baseline (no private networking): the default
-    below allows every public IP, matching the ticket's scope of "public
-    dev configuration now, private networking later." Narrow this list (or
-    override it per-operator in a local *.auto.tfvars) if that's too broad
-    for your use.
+    Firewall rules to open on the dev PostgreSQL server. Ignored: this
+    environment's server is VNet-integrated (see module.networking /
+    docs/private-database-connectivity.md), and Flexible Server firewall
+    rules only apply to servers with a public endpoint. Kept only so the
+    postgresql module still works standalone (e.g. in tests) against a
+    public server.
   EOT
   type = list(object({
     name     = string
     start_ip = string
     end_ip   = string
   }))
-  default = [
-    {
-      name     = "AllowAllPublicDev"
-      start_ip = "0.0.0.0"
-      end_ip   = "255.255.255.255"
-    }
-  ]
+  default = []
 }
 
 # --- Application containers --------------------------------------------------
@@ -126,7 +120,7 @@ variable "backend_image_tag" {
     No default: every apply must name a specific, known image rather than
     silently reusing whatever "latest" happens to point at.
   EOT
-  type = string
+  type        = string
 }
 
 variable "frontend_image_tag" {
@@ -137,5 +131,5 @@ variable "frontend_image_tag" {
     No default: every apply must name a specific, known image rather than
     silently reusing whatever "latest" happens to point at.
   EOT
-  type = string
+  type        = string
 }

@@ -3,15 +3,17 @@
 # ../../modules/* to stand up the shared Azure foundation described in
 # Documents/azure-architecture.md:
 #
-#   resource group -> log analytics -> container apps environment
+#   resource group -> log analytics -> networking (VNet + subnets + DNS)
+#                                    -> container apps environment
 #                                    -> postgresql flexible server + database
 #
 # Rule of thumb (per the architecture doc): modules define shape, this
 # environment supplies values. Sizes, SKUs, and tags belong in
 # variables.tf/terraform.tfvars, not inside the modules.
 #
-# Out of scope here (see ticket): private networking for Postgres. That's
-# follow-up, production-hardening work.
+# Postgres and the Container Apps Environment share module.networking's
+# VNet, so the app-to-database path never touches the public internet --
+# see docs/private-database-connectivity.md.
 
 resource "random_string" "postgres_suffix" {
   length  = 6
@@ -46,6 +48,19 @@ module "log_analytics" {
   tags                = local.tags
 }
 
+# Private app-to-database path (see docs/private-database-connectivity.md):
+# one VNet, a subnet the Container Apps Environment integrates into, a
+# subnet delegated to PostgreSQL Flexible Server, and the private DNS zone
+# that resolves the server's FQDN to its private IP inside the VNet.
+module "networking" {
+  source = "../../modules/networking"
+
+  name_prefix         = local.name_prefix
+  location            = module.resource_group.location
+  resource_group_name = module.resource_group.name
+  tags                = local.tags
+}
+
 module "container_apps_environment" {
   source = "../../modules/container_apps_environment"
 
@@ -53,7 +68,13 @@ module "container_apps_environment" {
   location                   = module.resource_group.location
   resource_group_name        = module.resource_group.name
   log_analytics_workspace_id = module.log_analytics.id
-  tags                       = local.tags
+
+  # Gives the frontend and backend Container Apps a private address in the
+  # VNet, so the backend can reach Postgres's private endpoint. Each app's
+  # own external_ingress setting still controls public reachability.
+  infrastructure_subnet_id = module.networking.container_apps_subnet_id
+
+  tags = local.tags
 }
 
 module "postgresql" {
@@ -73,10 +94,21 @@ module "postgresql" {
   database_name       = var.postgres_database_name
   allowed_cidr_ranges = var.postgres_allowed_cidr_ranges
 
-  # Ticket scope: public dev baseline, no private networking.
-  public_network_access_enabled = true
+  # VNet-integrated: no public endpoint. Reachable only from
+  # module.networking's postgres subnet (and anything else routed into that
+  # VNet), resolved via the private DNS zone linked to it.
+  public_network_access_enabled = false
+  delegated_subnet_id           = module.networking.postgres_subnet_id
+  private_dns_zone_id           = module.networking.postgres_private_dns_zone_id
 
   tags = local.tags
+
+  # The private DNS zone must already be linked to the VNet before the
+  # server is created, or server creation fails looking up the zone link.
+  # That link is a sibling resource inside module.networking, invisible to
+  # Terraform's automatic graph from the ID references above alone, so it's
+  # spelled out explicitly.
+  depends_on = [module.networking]
 }
 
 module "container_registry" {
@@ -117,12 +149,12 @@ resource "azurerm_role_assignment" "acr_pull" {
 module "backend_app" {
   source = "../../modules/container_app"
 
-  name                          = "ca-${local.name_prefix}-backend"
-  location                      = module.resource_group.location
-  resource_group_name           = module.resource_group.name
-  container_app_environment_id  = module.container_apps_environment.id
-  registry_server               = module.container_registry.login_server
-  acr_pull_identity_id          = azurerm_user_assigned_identity.acr_pull.id
+  name                         = "ca-${local.name_prefix}-backend"
+  location                     = module.resource_group.location
+  resource_group_name          = module.resource_group.name
+  container_app_environment_id = module.container_apps_environment.id
+  registry_server              = module.container_registry.login_server
+  acr_pull_identity_id         = azurerm_user_assigned_identity.acr_pull.id
 
   image       = "${module.container_registry.login_server}/novacart-backend:${var.backend_image_tag}"
   target_port = 8000
@@ -148,12 +180,12 @@ module "backend_app" {
 module "frontend_app" {
   source = "../../modules/container_app"
 
-  name                          = "ca-${local.name_prefix}-frontend"
-  location                      = module.resource_group.location
-  resource_group_name           = module.resource_group.name
-  container_app_environment_id  = module.container_apps_environment.id
-  registry_server               = module.container_registry.login_server
-  acr_pull_identity_id          = azurerm_user_assigned_identity.acr_pull.id
+  name                         = "ca-${local.name_prefix}-frontend"
+  location                     = module.resource_group.location
+  resource_group_name          = module.resource_group.name
+  container_app_environment_id = module.container_apps_environment.id
+  registry_server              = module.container_registry.login_server
+  acr_pull_identity_id         = azurerm_user_assigned_identity.acr_pull.id
 
   image       = "${module.container_registry.login_server}/novacart-frontend:${var.frontend_image_tag}"
   target_port = 80
