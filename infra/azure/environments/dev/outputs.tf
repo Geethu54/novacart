@@ -29,8 +29,23 @@ output "container_apps_environment_static_ip" {
 }
 
 output "postgres_server_fqdn" {
-  description = "Fully-qualified domain name of the dev PostgreSQL server, e.g. for building DATABASE_URL in the backend Container App."
+  description = <<-EOT
+    Fully-qualified domain name of the dev PostgreSQL server, e.g. for
+    building DATABASE_URL in the backend Container App. This name only
+    resolves from inside module.networking's VNet (via the private DNS
+    zone linked to it) -- it has no public DNS record.
+  EOT
   value       = module.postgresql.server_fqdn
+}
+
+output "postgres_private_dns_zone_name" {
+  description = "Private DNS zone the Postgres FQDN resolves in. Query it with `az network private-dns record-set list` to verify the server only has a private A record."
+  value       = module.networking.postgres_private_dns_zone_name
+}
+
+output "vnet_id" {
+  description = "Resource ID of the shared VNet that both the Container Apps Environment and PostgreSQL are integrated into."
+  value       = module.networking.vnet_id
 }
 
 output "postgres_database_name" {
@@ -41,6 +56,11 @@ output "postgres_database_name" {
 output "postgres_administrator_login" {
   description = "Administrator username for the dev PostgreSQL server (the password is never emitted as an output)."
   value       = module.postgresql.administrator_login
+}
+
+output "container_registry_name" {
+  description = "ACR name (as opposed to its login server FQDN) -- what `az acr build --registry` expects."
+  value       = module.container_registry.name
 }
 
 output "container_registry_login_server" {
