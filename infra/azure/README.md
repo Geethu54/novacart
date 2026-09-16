@@ -88,6 +88,7 @@ resource_group_name  = "rg-novacart-tfstate"
 storage_account_name = "<the bootstrap storage account -- ask in #novacart-devops>"
 container_name       = "tfstate"
 key                  = "novacart-dev.tfstate"
+use_azuread_auth     = true   # RBAC via your `az login` identity, not a storage account key
 EOF
 
 terraform init -backend-config=backend.hcl   # uses your `az login` session

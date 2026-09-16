@@ -94,7 +94,15 @@ reconcile.
   account key. Both the CI identities and any local operator authenticate
   as themselves (OIDC / `az login` respectively) and are authorized via
   Azure RBAC (`Storage Blob Data Contributor`, scoped to just the `tfstate`
-  container) — see the next section.
+  container) — see the next section. This requires **two** separate backend
+  settings, not one: `use_oidc = true` controls how Terraform authenticates
+  to Azure AD; `use_azuread_auth = true` controls how it then talks to the
+  storage account itself. Without the second one, the azurerm backend
+  silently falls back to fetching a storage account *access key* (needs the
+  management-plane `listKeys` permission, which these identities
+  deliberately don't have) instead of using the AAD token it already has —
+  see the comment in `backend.tf` for the failure this causes if it's
+  missed.
 - **`backend.tf` is deliberately empty** (a "partial configuration"). The
   storage account name isn't hardcoded into version control; it's supplied
   via `-backend-config` at `terraform init` time, from GitHub Actions
