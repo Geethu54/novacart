@@ -46,6 +46,13 @@ jobs:
   check-confirmation:
     name: check confirmation input
     runs-on: ubuntu-latest
+    # Overrides the workflow-level working-directory default: this job
+    # never checks out the repo (a plain string comparison doesn't need
+    # any repo files), so infra/azure/environments/dev doesn't exist on
+    # this runner -- bash fails to even start there.
+    defaults:
+      run:
+        working-directory: .
     steps:
       - name: Verify typed confirmation
         run: |
