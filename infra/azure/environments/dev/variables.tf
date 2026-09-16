@@ -13,9 +13,23 @@ variable "environment" {
 }
 
 variable "location" {
-  description = "Azure region every resource in this environment is created in, except Postgres if postgres_location overrides it (see below)."
+  description = <<-EOT
+    Azure region every resource in this environment is created in, except
+    Postgres if postgres_location overrides it (see below).
+
+    `eastus` is restricted for PostgreSQL Flexible Server on this
+    subscription (see postgres_location's description) -- but Postgres is
+    VNet-integrated here (delegated subnet + private DNS zone, see
+    Documents/private-database-connectivity.md), and Azure requires a
+    VNet-integrated Flexible Server to be in the *same region as its VNet*.
+    So the fix isn't overriding postgres_location alone -- confirmed the
+    hard way with `The virtual network ... coming from a different
+    location eastus is currently not supported, expected location
+    eastus2.` -- it's moving the whole environment. `eastus2` has no
+    Postgres restriction and works for everything else here too.
+  EOT
   type        = string
-  default     = "eastus"
+  default     = "eastus2"
 }
 
 variable "postgres_location" {
@@ -31,14 +45,16 @@ variable "postgres_location" {
     region..."` on the top-level capability. Defaults to `location` so this
     only needs setting when that restriction actually applies.
 
-    It does, on this subscription: `eastus` returns exactly that
-    restriction for regular (non-fast) provisioning. `eastus2` has no
-    restriction and fully supports Postgres 16 on `Standard_B1ms` --
-    confirmed via the command above -- so it's the default here instead of
-    `null`.
+    In this environment specifically, don't use this to work around a
+    Postgres-only regional restriction -- Postgres is VNet-integrated here,
+    which requires its region to match the VNet's (i.e. `location`). Fix a
+    Postgres-region restriction by changing `location` itself instead (see
+    its description). This variable stays available for a *non*
+    VNet-integrated Postgres setup, or a future environment that splits
+    Postgres into its own region deliberately.
   EOT
   type        = string
-  default     = "eastus2"
+  default     = null
 }
 
 variable "tags" {
