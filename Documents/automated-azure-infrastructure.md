@@ -1,13 +1,14 @@
 # Automated Azure infrastructure (GitHub Actions + Terraform)
 
 How `infra/azure/environments/dev` gets applied by CI instead of from an
-operator's laptop. Three workflows, all in `.github/workflows/`:
+operator's laptop. Four workflows, all in `.github/workflows/`:
 
 | Workflow | Trigger | Does |
 |---|---|---|
 | [`terraform-plan.yml`](../.github/workflows/terraform-plan.yml) | PR touching `infra/azure/**` | `fmt -check`, `validate`, `plan`; posts the plan on the PR. Never applies. |
 | [`terraform-apply.yml`](../.github/workflows/terraform-apply.yml) | Push to `main` touching `infra/azure/**`, or manual dispatch | Plans, then applies that exact plan after a required-reviewer approval. |
 | [`terraform-drift-check.yml`](../.github/workflows/terraform-drift-check.yml) | Weekly schedule (Mondays), or manual dispatch | Plan-only; fails the run (red X) if it finds drift. Never applies. |
+| [`terraform-destroy.yml`](../.github/workflows/terraform-destroy.yml) | Manual dispatch only, with a typed confirmation input | Plans a destroy, then destroys after the same required-reviewer approval. Tears down `rg-novacart-dev` *through Terraform* rather than by deleting the resource group by hand, so state ends up correctly empty afterward instead of pointing at resources that no longer exist. |
 
 ## What infrastructure the pipeline manages
 
@@ -44,6 +45,13 @@ Three distinct triggers, three distinct purposes:
   of at the next real change.
 
 All three also accept `workflow_dispatch` for an on-demand run.
+
+- **`terraform-destroy.yml` runs only on manual dispatch, ever** — no push
+  or schedule trigger exists for it, deliberately. It also requires a typed
+  confirmation input (`destroy-dev`) before the job even starts, on top of
+  the same required-reviewer gate every apply goes through. Two separate
+  "are you sure" checks for the one workflow capable of deleting
+  everything.
 
 ## How infrastructure changes are reviewed before they're applied
 
