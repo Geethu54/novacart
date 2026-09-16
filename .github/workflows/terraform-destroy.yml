@@ -1,0 +1,187 @@
+name: Terraform Destroy (Infrastructure)
+
+# Manual-only, deliberately: tears down infra/azure/environments/dev
+# (rg-novacart-dev and everything in it) through Terraform, not by deleting
+# the resource group by hand in the Portal/CLI. Doing it this way keeps
+# state authoritative -- after a successful run, state correctly shows
+# nothing left, instead of pointing at resources that no longer exist
+# (which is what happens if the resource group is deleted out from under
+# Terraform, and is exactly the mess terraform-drift-check.yml exists to
+# eventually notice if it ever happens anyway).
+#
+# Same plan/gated-apply shape as terraform-apply.yml, same reasoning for
+# which identity does what:
+#   - backend/state auth: the PLAN identity, in every job, always -- saved
+#     plan files pin the backend config from plan-time, so varying this by
+#     job doesn't work (see the "terraform init" comment below and
+#     Documents/automated-azure-infrastructure.md for the full story).
+#   - provider auth (the identity that can actually delete resources): the
+#     APPLY identity, via ARM_*.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "destroy-dev" to confirm -- this deletes rg-novacart-dev and everything in it.'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+defaults:
+  run:
+    working-directory: infra/azure/environments/dev
+
+env:
+  TF_VERSION: "1.16.0"
+  TF_IN_AUTOMATION: "true"
+
+concurrency:
+  group: terraform-dev-apply # <- same group as terraform-apply.yml: never destroy and apply at once
+  cancel-in-progress: false
+
+jobs:
+  check-confirmation:
+    name: check confirmation input
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify typed confirmation
+        run: |
+          if [ "${{ inputs.confirm }}" != "destroy-dev" ]; then
+            echo "::error::Confirmation text didn't match 'destroy-dev' -- refusing to proceed. This is a deliberate typed guard, not a real password; its only job is to stop an accidental click."
+            exit 1
+          fi
+
+  plan:
+    name: terraform plan -destroy (dev)
+    needs: check-confirmation
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.plan.outputs.exit_code == '2' }}
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID_PLAN }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Azure login (OIDC, read-only)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID_PLAN }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: terraform init
+        run: |
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TF_STATE_CONTAINER }}" \
+            -backend-config="key=novacart-dev.tfstate" \
+            -backend-config="use_oidc=true" \
+            -backend-config="use_azuread_auth=true" \
+            -backend-config="subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            -backend-config="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+            -backend-config="client_id=${{ secrets.AZURE_CLIENT_ID_PLAN }}"
+
+      - name: terraform plan -destroy
+        id: plan
+        env:
+          TF_VAR_postgres_administrator_password: ${{ secrets.TF_VAR_POSTGRES_ADMINISTRATOR_PASSWORD }}
+        run: |
+          set +e
+          terraform plan -destroy -input=false -lock-timeout=5m -no-color -detailed-exitcode \
+            -var="backend_image_tag=${{ vars.BACKEND_IMAGE_TAG }}" \
+            -var="frontend_image_tag=${{ vars.FRONTEND_IMAGE_TAG }}" \
+            -out=tfplan > plan.txt 2>&1
+          code=$?
+          cat plan.txt
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" = "1" ]; then exit 1; fi
+
+      - name: Publish plan to job summary
+        if: always()
+        run: |
+          {
+            echo "### Terraform DESTROY plan -- \`infra/azure/environments/dev\`"
+            echo '```'
+            tail -c 60000 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload plan artifact
+        if: steps.plan.outputs.exit_code == '2'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-destroy
+          path: infra/azure/environments/dev/tfplan
+          retention-days: 1
+
+  destroy:
+    name: terraform destroy (dev)
+    needs: plan
+    if: needs.plan.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    environment: dev-infra # <- same required-reviewer gate as a real apply
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID_APPLY }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Azure login (OIDC, read-write)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID_APPLY }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Plan identity for the backend here too -- see the top-of-file
+      # comment and terraform-apply.yml's identical "terraform init" step.
+      - name: terraform init
+        run: |
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TF_STATE_CONTAINER }}" \
+            -backend-config="key=novacart-dev.tfstate" \
+            -backend-config="use_oidc=true" \
+            -backend-config="use_azuread_auth=true" \
+            -backend-config="subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            -backend-config="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+            -backend-config="client_id=${{ secrets.AZURE_CLIENT_ID_PLAN }}"
+
+      - name: Download destroy plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-destroy
+          path: infra/azure/environments/dev
+
+      - name: terraform apply (the destroy plan)
+        run: terraform apply -input=false -lock-timeout=5m -auto-approve tfplan
+
+      - name: Publish result to job summary
+        if: always()
+        run: |
+          {
+            echo "### Destroy complete -- remaining state"
+            echo '```'
+            terraform state list || echo "(empty -- everything destroyed)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
