@@ -15,7 +15,7 @@ infra/azure/
   environments/
     dev/                          entry point: run terraform here
       providers.tf                terraform + azurerm/random version pins
-      backend.tf                  state config (local for now, see file)
+      backend.tf                  remote state (azurerm backend, partial config -- see file)
       variables.tf                every input this environment accepts
       locals.tf                   naming convention + merged tags
       main.tf                     wires the modules together
@@ -74,14 +74,31 @@ your use, without needing to touch the module.
 
 ## Usage
 
+State is remote (see `backend.tf`), so `terraform init` needs the backend
+config supplied explicitly -- either flags every time, or once via a
+git-ignored `backend.hcl`:
+
 ```bash
 cd infra/azure/environments/dev
 cp terraform.tfvars.example terraform.tfvars   # then fill in real values
 export TF_VAR_postgres_administrator_password="..."   # don't put this in tfvars
-terraform init
+
+cat > backend.hcl <<'EOF'   # git-ignored -- see backend.tf for what each key does
+resource_group_name  = "rg-novacart-tfstate"
+storage_account_name = "<the bootstrap storage account -- ask in #novacart-devops>"
+container_name       = "tfstate"
+key                  = "novacart-dev.tfstate"
+EOF
+
+terraform init -backend-config=backend.hcl   # uses your `az login` session
 terraform plan
 terraform apply
 ```
+
+CI applies this same environment on merge to `main` instead of from an
+operator's machine -- see
+[Documents/automated-azure-infrastructure.md](../../Documents/automated-azure-infrastructure.md)
+for the pipeline, how it authenticates, and how state is protected.
 
 ## Provider version
 

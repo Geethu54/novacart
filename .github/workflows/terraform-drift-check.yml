@@ -1,0 +1,87 @@
+name: Terraform Drift Check (Infrastructure)
+
+# Plan-only, scheduled: catches infrastructure that changed outside
+# Terraform (a manual portal edit, an expired firewall exception, someone
+# running `az` by hand against the dev resource group) between applies.
+# Never applies -- a drift finding is a signal for a human to look at the
+# plan output and either fix the drift by hand or bring it back into the
+# next PR, not something this workflow decides on its own.
+
+on:
+  schedule:
+    - cron: "0 13 * * 1" # Monday 13:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write
+  contents: read
+
+defaults:
+  run:
+    working-directory: infra/azure/environments/dev
+
+env:
+  TF_VERSION: "1.16.0"
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  drift:
+    name: terraform plan (drift check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Azure login (OIDC, read-only)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID_PLAN }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: terraform init
+        run: |
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TF_STATE_CONTAINER }}" \
+            -backend-config="key=novacart-dev.tfstate" \
+            -backend-config="use_oidc=true" \
+            -backend-config="subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            -backend-config="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+            -backend-config="client_id=${{ secrets.AZURE_CLIENT_ID_PLAN }}"
+
+      - name: terraform plan (detect drift)
+        id: plan
+        env:
+          TF_VAR_postgres_administrator_password: ${{ secrets.TF_VAR_POSTGRES_ADMINISTRATOR_PASSWORD }}
+        run: |
+          set +e
+          terraform plan -input=false -lock-timeout=5m -no-color -detailed-exitcode \
+            -var="backend_image_tag=${{ vars.BACKEND_IMAGE_TAG }}" \
+            -var="frontend_image_tag=${{ vars.FRONTEND_IMAGE_TAG }}" | tee plan.txt
+          code="${PIPESTATUS[0]}"
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Publish plan to job summary
+        if: always()
+        run: |
+          {
+            echo "### Drift check -- \`infra/azure/environments/dev\`"
+            echo '```'
+            tail -c 60000 infra/azure/environments/dev/plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Exit code 2 = drift found (or an intentional config change waiting
+      # to be applied) -- fail the job so it shows red in the Actions tab
+      # and in any notification integration watching this workflow.
+      # Exit code 1 = a real error (bad credentials, API failure, etc).
+      - name: Fail on drift or error
+        if: steps.plan.outputs.exit_code != '0'
+        run: |
+          echo "::error::terraform plan reported changes (drift) or an error -- see the job summary above."
+          exit 1

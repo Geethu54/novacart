@@ -1,0 +1,138 @@
+name: Terraform Plan (Infrastructure)
+
+# Fast feedback on infra changes: runs automatically on every PR that
+# touches infra/azure/**, plans the dev environment, and posts the result
+# on the PR so a reviewer can see exactly what would change before they
+# approve the merge. Never applies anything -- see terraform-apply.yml for
+# that half.
+#
+# Secrets used here (AZURE_CLIENT_ID_PLAN) belong to a read-only Azure AD
+# app registration (Reader role on the dev subscription/resource group)
+# trusted via OIDC for the `pull_request` subject only -- see "How the
+# pipeline authenticates" in docs/automated-azure-infrastructure.md. It
+# physically cannot create/modify/delete anything, so a PR from an
+# untrusted branch can't use this workflow to reach into Azure beyond
+# reading state to compute a diff.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "infra/azure/**"
+      - ".github/workflows/terraform-plan.yml"
+
+permissions:
+  id-token: write # required for azure/login's OIDC federated token exchange
+  contents: read
+  pull-requests: write # to post/update the plan comment
+
+defaults:
+  run:
+    working-directory: infra/azure/environments/dev
+
+env:
+  TF_VERSION: "1.16.0"
+  TF_IN_AUTOMATION: "true"
+
+concurrency:
+  group: terraform-dev-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: terraform plan (dev)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Azure login (OIDC, read-only)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID_PLAN }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: terraform init
+        run: |
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TF_STATE_CONTAINER }}" \
+            -backend-config="key=novacart-dev.tfstate" \
+            -backend-config="use_oidc=true" \
+            -backend-config="subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            -backend-config="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+            -backend-config="client_id=${{ secrets.AZURE_CLIENT_ID_PLAN }}"
+
+      - name: terraform fmt -check
+        run: terraform fmt -check -recursive -diff ..
+
+      - name: terraform validate
+        run: terraform validate
+
+      - name: terraform plan
+        id: plan
+        env:
+          TF_VAR_postgres_administrator_password: ${{ secrets.TF_VAR_POSTGRES_ADMINISTRATOR_PASSWORD }}
+        run: |
+          set +e
+          terraform plan -input=false -lock-timeout=5m -no-color \
+            -var="backend_image_tag=${{ vars.BACKEND_IMAGE_TAG }}" \
+            -var="frontend_image_tag=${{ vars.FRONTEND_IMAGE_TAG }}" \
+            -out=tfplan | tee plan.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish plan to job summary
+        if: always()
+        run: |
+          {
+            echo "### Terraform plan -- \`infra/azure/environments/dev\`"
+            echo '```'
+            tail -c 60000 infra/azure/environments/dev/plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment plan on PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'infra/azure/environments/dev/plan.txt';
+            let body = fs.existsSync(path) ? fs.readFileSync(path, 'utf8') : '(no plan output captured)';
+            if (body.length > 60000) {
+              body = body.slice(-60000) + '\n\n...(truncated, see the job summary for the full output)';
+            }
+            const marker = '<!-- terraform-plan:dev -->';
+            const commentBody = `${marker}\n### Terraform plan -- \`infra/azure/environments/dev\`\n\n<details><summary>Show plan (click to expand)</summary>\n\n\`\`\`hcl\n${body}\n\`\`\`\n\n</details>`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: commentBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: commentBody,
+              });
+            }
+
+      - name: Fail if terraform plan errored
+        if: steps.plan.outputs.exit_code == '1'
+        run: exit 1
