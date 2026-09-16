@@ -30,9 +30,15 @@ variable "postgres_location" {
     and look for a `"reason": "Provisioning is restricted in this
     region..."` on the top-level capability. Defaults to `location` so this
     only needs setting when that restriction actually applies.
+
+    It does, on this subscription: `eastus` returns exactly that
+    restriction for regular (non-fast) provisioning. `eastus2` has no
+    restriction and fully supports Postgres 16 on `Standard_B1ms` --
+    confirmed via the command above -- so it's the default here instead of
+    `null`.
   EOT
   type        = string
-  default     = null
+  default     = "eastus2"
 }
 
 variable "tags" {
