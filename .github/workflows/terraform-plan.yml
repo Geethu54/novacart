@@ -93,7 +93,7 @@ jobs:
           {
             echo "### Terraform plan -- \`infra/azure/environments/dev\`"
             echo '```'
-            tail -c 60000 infra/azure/environments/dev/plan.txt
+            tail -c 60000 plan.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
