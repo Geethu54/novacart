@@ -142,10 +142,11 @@ jobs:
     if: needs.plan.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
     environment: dev-infra # <- required-reviewer gate lives on this environment
-    # See the comment on the plan job's env block -- same reasoning, but
-    # this is the identity that can actually write, so getting the
-    # provider's auth path explicit (not an implicit CLI-session fallback)
-    # matters even more here.
+    # This is the *provider's* auth (actual resource writes) -- see the
+    # comment on the plan job's env block for why it needs to be explicit
+    # rather than an implicit CLI-session fallback. The *backend's* auth
+    # (state storage) is deliberately kept on the plan identity even in
+    # this job -- see the comment on "terraform init" below.
     env:
       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID_APPLY }}
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -166,6 +167,13 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      # Deliberately the PLAN identity's client_id, not APPLY's, for the
+      # *backend* specifically -- see the comment below on "terraform
+      # apply". Both identities already have identical Storage Blob Data
+      # Contributor rights on the tfstate container, so there's no security
+      # reason to vary backend auth by job; keeping it identical to what
+      # the plan job used avoids relying on the plan file's embedded
+      # backend config falling back to some other identity at apply time.
       - name: terraform init
         run: |
           terraform init -input=false \
@@ -177,7 +185,7 @@ jobs:
             -backend-config="use_azuread_auth=true" \
             -backend-config="subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
             -backend-config="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
-            -backend-config="client_id=${{ secrets.AZURE_CLIENT_ID_APPLY }}"
+            -backend-config="client_id=${{ secrets.AZURE_CLIENT_ID_PLAN }}"
 
       - name: Download plan artifact
         uses: actions/download-artifact@v4
