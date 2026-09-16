@@ -28,6 +28,17 @@ jobs:
   drift:
     name: terraform plan (drift check)
     runs-on: ubuntu-latest
+    # ARM_* env vars, not just -backend-config flags: the azurerm *provider*
+    # block (providers.tf) has no explicit auth config of its own, so
+    # without these it silently falls back to whatever Azure CLI session
+    # azure/login happens to have set up. Setting them explicitly here
+    # means the provider and the backend both authenticate the same,
+    # well-documented way on every terraform invocation in this job.
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID_PLAN }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
     steps:
       - uses: actions/checkout@v4
 
