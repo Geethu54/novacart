@@ -151,22 +151,59 @@ exactly the workflow run that requested it.
 Two Azure AD app registrations, not one, on purpose — least privilege
 between *reading* infrastructure state and *changing* it:
 
-| Identity | Federated credential subject | Azure role | Used by |
+| Identity | Federated credential subjects | Azure role | Used for |
 |---|---|---|---|
-| "plan" (`AZURE_CLIENT_ID_PLAN`) | `repo:<org>/novacart:pull_request` | `Reader` on the dev subscription/RG | `terraform-plan.yml`, the `plan` job in `terraform-apply.yml`, `terraform-drift-check.yml` |
-| "apply" (`AZURE_CLIENT_ID_APPLY`) | `repo:<org>/novacart:environment:dev-infra` | `Contributor` on `rg-novacart-dev` (or a narrower custom role) | only the `apply` job in `terraform-apply.yml` |
+| "plan" (`AZURE_CLIENT_ID_PLAN`) | `pull_request`; `ref:refs/heads/main`; `environment:dev-infra` | `Reader` on the dev subscription/RG, plus `Storage Blob Data Contributor` on the `tfstate` container | Every job's **backend** (state storage) auth, in every workflow, always — see below for why |
+| "apply" (`AZURE_CLIENT_ID_APPLY`) | `environment:dev-infra` only | `Contributor` on `rg-novacart-dev`, plus `User Access Administrator` there (needed to create the `AcrPull` role assignment), plus the same `Storage Blob Data Contributor` | Only the **provider** (actual resource create/modify/delete) auth, only in the gated `apply`/`destroy` jobs |
 
 The subject claim is what makes this safe rather than cosmetic: the
 "apply" credential's federated trust is scoped to the `dev-infra`
-**environment**, so an Azure AD token that can create/modify/delete
+**environment** only, so an Azure AD token that can create/modify/delete
 resources is only ever mintable for a job that (a) explicitly declares
 `environment: dev-infra` and (b) has therefore already passed that
 environment's required-reviewer gate. A PR-triggered run — including one
-from a branch in the same repo — has no path to that credential at all; it
-can only ever obtain the read-only "plan" token. `AZURE_CLIENT_ID_APPLY` is
-stored as an **environment secret** on `dev-infra`, not a repository
-secret, for the same reason: repository secrets are visible to every
-workflow run, environment secrets only to jobs targeting that environment.
+from a branch in the same repo — has no path to that credential at all.
+`AZURE_CLIENT_ID_APPLY` is stored as an **environment secret** on
+`dev-infra`, not a repository secret, for the same reason: repository
+secrets are visible to every workflow run, environment secrets only to
+jobs targeting that environment.
+
+### Backend auth vs. provider auth aren't the same thing, and can't vary the same way
+
+This split (plan identity always for the backend, apply identity only for
+the provider) wasn't the original design — it's the fix for a real bug hit
+building this pipeline, worth recording because it'll bite anyone who
+"simplifies" it back:
+
+Terraform's saved plan files (`-out=tfplan`) **pin the backend
+configuration from plan-time**, client_id included. `tfplan` is always
+created in a `plan` job using the plan identity. If the later `apply` job's
+own `terraform init` configured the backend with the *apply* identity
+instead, `terraform apply tfplan` would still authenticate to the state
+backend as whatever was pinned into the plan file (the plan identity) --
+not what that job's own init just set up. Since the plan identity's
+federated credential didn't originally trust the `environment:dev-infra`
+subject, every apply failed at the backend's OIDC exchange with
+`AADSTS700213: No matching federated identity record found`, even though
+`azure/login` and `terraform init` (using the apply identity explicitly)
+both succeeded moments earlier in the same job. The fix: since both
+identities already carry identical `Storage Blob Data Contributor` rights
+on `tfstate`, there's no security reason to vary *backend* auth by job at
+all -- so every job's `terraform init` now passes
+`-backend-config="client_id=...AZURE_CLIENT_ID_PLAN..."` regardless of
+which job it's in, and only the **provider** block (via `ARM_CLIENT_ID` and
+friends, set at the job level) uses the apply identity where write access
+is actually needed. Two separate auth paths, two separate identities,
+deliberately not symmetric.
+
+The provider's own auth needed to be explicit for a related reason: with no
+`client_id`/`use_oidc` set on the `azurerm` provider block in
+`providers.tf`, it silently falls back to whatever Azure CLI session
+`azure/login` happens to have left active -- which works for read-only
+`plan` operations but is a fragile, implicit way to authenticate the one
+operation (`apply`) that actually writes resources. `ARM_CLIENT_ID` /
+`ARM_TENANT_ID` / `ARM_SUBSCRIPTION_ID` / `ARM_USE_OIDC=true`, set as job-
+level env vars, make it explicit and consistent instead.
 
 `postgres_administrator_password` is a separate concern — a Terraform
 *variable* value, not an Azure credential — and is still a plain GitHub
@@ -243,12 +280,20 @@ credential; it doesn't remove the need to store this one.
   reviewer, and probably a wait timer) — none of that exists here, and
   copying `dev-infra`'s settings onto a `prod-infra` environment by
   reflex would under-protect production.
-- **`Contributor` on the apply identity is broader than it should be
-  long-term.** It's the pragmatic starting point for a small, fast-moving
-  dev resource group; production should scope this down to a custom role
-  with only the specific `Microsoft.*/write|delete` actions the modules in
-  `infra/azure/modules/` actually use, so a compromised or buggy workflow
-  can't do more than the pipeline is supposed to.
+- **`Contributor` *and* `User Access Administrator` on the apply identity is
+  broader than it should be long-term** — the second one especially:
+  `User Access Administrator` lets that identity grant or revoke *any* role
+  assignment in `rg-novacart-dev`, not just the one `AcrPull` assignment
+  Terraform actually creates. It's on there because `Contributor` alone
+  deliberately excludes `Microsoft.Authorization/roleAssignments/write` (a
+  real Azure AD safety boundary between "manage resources" and "manage
+  access"), and this was the fastest way to unblock a small, fast-moving
+  dev resource group. Production should replace both with a custom role
+  scoped to exactly the `Microsoft.*/write|delete` actions the modules in
+  `infra/azure/modules/` actually use, plus `roleAssignments/write` scoped
+  to just the ACR resource (or its resource type) rather than the whole
+  resource group, so a compromised or buggy workflow can't do more than the
+  pipeline is supposed to.
 - **No approval timeout, no forced second reviewer, no break-glass audit
   trail beyond GitHub's own environment history.** Fine for a small team on
   a dev environment; a production change process typically wants more than
