@@ -113,7 +113,6 @@ jobs:
           code=$?
           cat plan.txt
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          echo "DEBUG: terraform plan exited with code $code" >&2
           # 0 = no changes, 1 = error, 2 = changes pending. Only 1 should
           # fail the job -- 0 and 2 are both legitimate plan outcomes.
           if [ "$code" = "1" ]; then exit 1; fi
@@ -194,27 +193,7 @@ jobs:
           path: infra/azure/environments/dev
 
       - name: terraform apply
-        env:
-          # Temporary: diagnosing a reproducible AADSTS700213 on this step
-          # specifically, despite terraform init (same job, same identity,
-          # same OIDC config) succeeding moments earlier. Full HTTP trace so
-          # we can see the actual audience/subject this step's OIDC
-          # exchange sends, instead of guessing at another fix. Remove once
-          # this is root-caused -- TF_LOG=DEBUG on every apply is too noisy
-          # for routine use and duplicates -backend-config values into the
-          # log (masked by GitHub's secret redaction, but still).
-          TF_LOG: DEBUG
-        run: |
-          terraform apply -input=false -lock-timeout=5m -auto-approve tfplan 2>&1 | tee tf-debug.log
-          exit ${PIPESTATUS[0]}
-
-      - name: Upload debug log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tf-debug-log
-          path: infra/azure/environments/dev/tf-debug.log
-          retention-days: 1
+        run: terraform apply -input=false -lock-timeout=5m -auto-approve tfplan
 
       - name: Publish outputs to job summary
         if: always()
