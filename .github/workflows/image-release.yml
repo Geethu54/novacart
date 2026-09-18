@@ -125,7 +125,13 @@ jobs:
       # Persisted so a later infra-only change (or a manual terraform-apply
       # dispatch with no explicit tag inputs) keeps deploying what this run
       # just published, instead of silently falling back to a stale tag.
+      # GITHUB_TOKEN cannot write repository Actions variables -- that
+      # endpoint requires an OAuth/PAT token with repo scope, regardless of
+      # this job's `permissions:` block. Hence the dedicated PAT here, used
+      # only for this one step.
       - name: Record this tag as the dev default
+        env:
+          GH_TOKEN: ${{ secrets.REPO_VARS_PAT }}
         run: |
           gh variable set BACKEND_IMAGE_TAG --repo "${{ github.repository }}" --body "$IMAGE_TAG"
           gh variable set FRONTEND_IMAGE_TAG --repo "${{ github.repository }}" --body "$IMAGE_TAG"
