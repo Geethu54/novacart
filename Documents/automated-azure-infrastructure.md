@@ -10,6 +10,15 @@ operator's laptop. Four workflows, all in `.github/workflows/`:
 | [`terraform-drift-check.yml`](../.github/workflows/terraform-drift-check.yml) | Weekly schedule (Mondays), or manual dispatch | Plan-only; fails the run (red X) if it finds drift. Never applies. |
 | [`terraform-destroy.yml`](../.github/workflows/terraform-destroy.yml) | Manual dispatch only, with a typed confirmation input | Plans a destroy, then destroys after the same required-reviewer approval. Tears down `rg-novacart-dev` *through Terraform* rather than by deleting the resource group by hand, so state ends up correctly empty afterward instead of pointing at resources that no longer exist. |
 
+The application side -- building/publishing the images these Container Apps
+run, and feeding a new tag into `terraform-apply.yml` -- is a separate
+workflow, covered in
+[automated-azure-deployment.md](automated-azure-deployment.md):
+
+| Workflow | Trigger | Does |
+|---|---|---|
+| [`image-release.yml`](../.github/workflows/image-release.yml) | Push to `main` touching `backend/**`/`frontend/**`, or manual dispatch | Builds + publishes both images to ACR tagged by commit, then dispatches `terraform-apply.yml` with that tag |
+
 ## What infrastructure the pipeline manages
 
 Everything under `infra/azure/environments/dev` (one Terraform state, one
@@ -21,11 +30,12 @@ see [infra/azure/README.md](../infra/azure/README.md) for the resource-by-
 resource layout.
 
 It does **not** manage: the images those Container Apps run (`backend_image_tag`
-/ `frontend_image_tag` are Terraform *inputs* — built and pushed to ACR by a
-separate, not-yet-written image-release workflow; this pipeline only points
-existing Container Apps at a tag someone else already pushed) or the
-Terraform state storage account itself (see "Bootstrapping remote state"
-below — that has to exist before this pipeline can run at all).
+/ `frontend_image_tag` are Terraform *inputs* — built and pushed to ACR by
+[`image-release.yml`](../.github/workflows/image-release.yml), see
+[automated-azure-deployment.md](automated-azure-deployment.md); this pipeline
+only points existing Container Apps at a tag that workflow already pushed)
+or the Terraform state storage account itself (see "Bootstrapping remote
+state" below — that has to exist before this pipeline can run at all).
 
 ## When the infrastructure workflow runs
 

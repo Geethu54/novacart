@@ -1,0 +1,178 @@
+name: Image Release (Build, Publish, Deploy to Dev)
+
+# Builds the frontend and backend container images, publishes them to ACR,
+# and hands the resulting tag to terraform-apply.yml so Azure DEV gets
+# updated to run them.
+#
+# Deliberately split into two jobs with a hard boundary between them:
+#
+#   build-images   -- builds + pushes both images. Nothing about Azure
+#                      Container Apps or Terraform lives here; its only job
+#                      is "produce a trustworthy artifact in the registry".
+#   trigger-deploy -- records that tag as the current dev default and asks
+#                      the *existing*, already-reviewed infra pipeline
+#                      (terraform-apply.yml) to deploy it. This job never
+#                      touches Azure resources directly (no
+#                      `az containerapp update`) -- Terraform is the only
+#                      thing allowed to change a Container App's image, or
+#                      the next `terraform apply` would silently revert
+#                      whatever this workflow set. See
+#                      Documents/automated-azure-deployment.md.
+#
+# See Documents/automated-azure-deployment.md for the full picture,
+# including how this fits with terraform-apply.yml's own required-reviewer
+# gate on the `dev-infra` environment.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - ".github/workflows/image-release.yml"
+  workflow_dispatch: {}
+  # Manual re-run without a new commit. The `images` identity's federated
+  # credential only trusts the `main` ref (see the doc above), so
+  # dispatching this from any other branch fails at the Azure login step by
+  # design -- it cannot publish unreviewed code to the dev registry.
+
+permissions:
+  contents: read
+
+concurrency:
+  # A build for an older commit on the same ref is superseded the moment a
+  # newer one starts -- images are tagged per-commit (never "latest"), so
+  # there's nothing an in-progress older run protects by finishing. Unlike
+  # terraform-apply.yml's apply job, nothing here is a live Azure mutation.
+  group: image-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-images:
+    name: build & push (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # azure/login's OIDC federated token exchange
+      contents: read
+    strategy:
+      fail-fast: false # a backend build failure shouldn't hide the frontend's result, or vice versa
+      matrix:
+        include:
+          - app: backend
+            context: ./backend
+          - app: frontend
+            context: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image tag
+        run: echo "IMAGE_TAG=git-${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
+
+      # OIDC only -- no ACR admin credential exists (admin_enabled = false,
+      # see infra/azure/modules/container_registry/main.tf) and no secret
+      # is stored for this identity beyond its client ID. See "How this
+      # authenticates" in Documents/automated-azure-deployment.md for the
+      # federated-credential setup and the AcrPush-only role scope.
+      - name: Azure login (OIDC, registry push only)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID_IMAGES }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: az acr login
+        run: az acr login --name "${ACR_LOGIN_SERVER%%.*}"
+        env:
+          ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ${{ vars.ACR_LOGIN_SERVER }}/novacart-${{ matrix.app }}:${{ env.IMAGE_TAG }}
+          # Traceability baked into the artifact itself, not just its tag --
+          # `docker inspect`/`skopeo inspect` on the running image can
+          # always answer "what commit is this" even if the tag naming
+          # convention ever changes.
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Summary
+        run: |
+          {
+            echo "### Built \`novacart-${{ matrix.app }}:${{ env.IMAGE_TAG }}\`"
+            echo "- Registry: \`${{ vars.ACR_LOGIN_SERVER }}\`"
+            echo "- Source: ${{ github.sha }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  trigger-deploy:
+    name: update dev default + trigger deploy
+    needs: build-images
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write # gh variable set + gh workflow run (workflow_dispatch is explicitly exempt from the GITHUB_TOKEN recursive-trigger restriction)
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Compute image tag
+        run: echo "IMAGE_TAG=git-${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
+
+      # Persisted so a later infra-only change (or a manual terraform-apply
+      # dispatch with no explicit tag inputs) keeps deploying what this run
+      # just published, instead of silently falling back to a stale tag.
+      - name: Record this tag as the dev default
+        run: |
+          gh variable set BACKEND_IMAGE_TAG --repo "${{ github.repository }}" --body "$IMAGE_TAG"
+          gh variable set FRONTEND_IMAGE_TAG --repo "${{ github.repository }}" --body "$IMAGE_TAG"
+
+      # Deliberately *not* `az containerapp update --image ...` -- Terraform
+      # owns the Container Apps' image field (infra/azure/environments/dev/
+      # main.tf). Going around it here would drift Terraform state from
+      # reality; the next `terraform apply` would revert the image back to
+      # whatever the state file still remembers. Dispatching the existing
+      # workflow instead reuses its already-reviewed plan -> approve ->
+      # apply gate (`dev-infra` environment) verbatim.
+      - name: Trigger terraform-apply.yml for this tag
+        run: |
+          gh workflow run terraform-apply.yml \
+            --repo "${{ github.repository }}" \
+            --ref main \
+            -f backend_image_tag="$IMAGE_TAG" \
+            -f frontend_image_tag="$IMAGE_TAG"
+
+      - name: Find the triggered run (for the summary link)
+        id: find_run
+        run: |
+          RUN_URL=""
+          for i in $(seq 1 8); do
+            sleep 3
+            RUN_URL=$(gh run list --repo "${{ github.repository }}" \
+              --workflow=terraform-apply.yml --event=workflow_dispatch \
+              --limit 1 --json url --jq '.[0].url // empty')
+            [ -n "$RUN_URL" ] && break
+          done
+          echo "run_url=$RUN_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Image release -- ${{ github.sha }}"
+            echo ""
+            echo "| Image | Tag |"
+            echo "|---|---|"
+            echo "| \`novacart-backend\` | \`$IMAGE_TAG\` |"
+            echo "| \`novacart-frontend\` | \`$IMAGE_TAG\` |"
+            echo ""
+            if [ -n "${{ steps.find_run.outputs.run_url }}" ]; then
+              echo "Deploy triggered: ${{ steps.find_run.outputs.run_url }}"
+            else
+              echo "Deploy triggered (run not found automatically -- check the Actions tab for a new \`terraform-apply.yml\` run)."
+            fi
+            echo ""
+            echo "That run still requires \`dev-infra\` environment approval before Azure DEV actually changes -- see Documents/automated-azure-deployment.md."
+          } >> "$GITHUB_STEP_SUMMARY"
