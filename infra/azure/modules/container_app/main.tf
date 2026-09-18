@@ -20,6 +20,7 @@ resource "azurerm_container_app" "this" {
   identity {
     type         = "UserAssigned"
     identity_ids = [var.acr_pull_identity_id]
+    
   }
 
   registry {
