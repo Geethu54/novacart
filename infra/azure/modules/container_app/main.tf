@@ -46,7 +46,7 @@ resource "azurerm_container_app" "this" {
     content {
       name                = local.kv_secret_names[secret.key]
       key_vault_secret_id = secret.value
-      identity             = var.key_vault_identity_id
+      identity            = var.key_vault_identity_id
     }
   }
 

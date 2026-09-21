@@ -179,7 +179,9 @@ module "key_vault" {
   tenant_id           = data.azurerm_client_config.current.tenant_id
 
   terraform_identity_object_id = data.azurerm_client_config.current.object_id
-  reader_identity_object_ids   = [azurerm_user_assigned_identity.keyvault_reader.principal_id]
+  reader_identity_object_ids = {
+    keyvault_reader = azurerm_user_assigned_identity.keyvault_reader.principal_id
+  }
 
   tags = local.tags
 }

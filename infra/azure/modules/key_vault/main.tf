@@ -38,7 +38,7 @@ resource "azurerm_key_vault_access_policy" "terraform" {
 }
 
 resource "azurerm_key_vault_access_policy" "readers" {
-  for_each = toset(var.reader_identity_object_ids)
+  for_each = var.reader_identity_object_ids
 
   key_vault_id = azurerm_key_vault.this.id
   tenant_id    = var.tenant_id

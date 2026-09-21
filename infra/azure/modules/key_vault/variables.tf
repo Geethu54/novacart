@@ -24,9 +24,9 @@ variable "terraform_identity_object_id" {
 }
 
 variable "reader_identity_object_ids" {
-  description = "Object IDs of managed identities granted read-only (Get) access to secrets -- e.g. a Container App's identity resolving a Key Vault-backed secret reference at runtime."
-  type        = list(string)
-  default     = []
+  description = "Object IDs of managed identities granted read-only (Get) access to secrets, keyed by a caller-chosen static name (e.g. \"keyvault_reader\") -- e.g. a Container App's identity resolving a Key Vault-backed secret reference at runtime. A map, not a list: the object ID is often a not-yet-known attribute of a resource created in the same apply (like an identity's principal_id), and for_each requires its keys to be known at plan time even when the values aren't."
+  type        = map(string)
+  default     = {}
 }
 
 variable "tags" {
