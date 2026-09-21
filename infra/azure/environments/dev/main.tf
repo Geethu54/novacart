@@ -181,9 +181,17 @@ module "key_vault" {
   # See terraform_apply_identity_object_id's description (variables.tf) for
   # why this can't just be data.azurerm_client_config.current.object_id.
   terraform_identity_object_id = coalesce(var.terraform_apply_identity_object_id, data.azurerm_client_config.current.object_id)
-  reader_identity_object_ids = {
-    keyvault_reader = azurerm_user_assigned_identity.keyvault_reader.principal_id
-  }
+
+  # keyvault_reader: the Container App's runtime identity, resolving the
+  # DATABASE_URL secret reference. plan_identity: see
+  # terraform_plan_identity_object_id's description (variables.tf) -- a
+  # read-only `terraform plan` still reads this secret's live value during
+  # refresh. Omitted (not just null-valued) when unset, since for_each
+  # rejects a null value even for a key that'd otherwise be unused.
+  reader_identity_object_ids = merge(
+    { keyvault_reader = azurerm_user_assigned_identity.keyvault_reader.principal_id },
+    var.terraform_plan_identity_object_id != null ? { plan_identity = var.terraform_plan_identity_object_id } : {}
+  )
 
   tags = local.tags
 }
