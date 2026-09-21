@@ -199,6 +199,16 @@ resource "azurerm_key_vault_secret" "postgres_connection_string" {
   lifecycle {
     ignore_changes = [value]
   }
+
+  # module.key_vault: key_vault_id above only proves the *vault* exists
+  # (azurerm_key_vault.this, the resource that produces module.key_vault.id)
+  # -- it does not depend on the sibling azurerm_key_vault_access_policy.terraform
+  # resource inside that module, which is what actually grants this apply
+  # identity Get/Set on secrets. Without this, Terraform can create/check
+  # this secret before that access policy exists, failing with 403. Same
+  # class of invisible-sibling-resource issue as backend_app's depends_on
+  # on module.key_vault, below.
+  depends_on = [module.key_vault]
 }
 
 # Created (and granted AcrPull) before either Container App exists, and
