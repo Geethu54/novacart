@@ -149,3 +149,31 @@ variable "frontend_image_tag" {
   EOT
   type        = string
 }
+
+# --- Identity -----------------------------------------------------------
+
+variable "terraform_apply_identity_object_id" {
+  description = <<-EOT
+    Object ID of the identity that will actually run `terraform apply` and
+    make the real Key Vault Get/Set calls -- novacart-github-apply
+    (AZURE_APPLY_SP_OBJECT_ID repo variable) in CI, a developer's own `az
+    login` object ID locally.
+
+    Must be passed explicitly (as a `-var`) in this repo's CI: terraform-
+    apply.yml plans as AZURE_CLIENT_ID_PLAN and applies the *saved plan
+    file* as AZURE_CLIENT_ID_APPLY in a separate job, and
+    data.azurerm_client_config.current is resolved once, when the plan is
+    computed -- so left to its own devices it always bakes in the plan
+    identity, never the identity that will actually execute the apply. See
+    module.key_vault's terraform_identity_object_id (this environment's
+    main.tf) for where this feeds in, and "How the pipeline authenticates"
+    in Documents/automated-azure-infrastructure.md for the plan/apply
+    identity split itself.
+
+    Defaults to null so a local single-identity `terraform apply` (where
+    the current CLI session already is the identity that will apply) keeps
+    working without setting this.
+  EOT
+  type        = string
+  default     = null
+}
