@@ -27,7 +27,13 @@ resource "azurerm_postgresql_flexible_server" "this" {
   tags = var.tags
 
   lifecycle {
-    ignore_changes = [zone]
+    # administrator_password: lets a password rotated directly against the
+    # live server (`az postgres flexible-server update --admin-password`,
+    # paired with updating the matching Key Vault secret -- see "Secret
+    # rotation" in Documents/secret-and-identity-hardening.md) stick,
+    # instead of the next unrelated apply silently resetting it back to
+    # whatever value is still in Terraform state.
+    ignore_changes = [zone, administrator_password]
   }
 }
 

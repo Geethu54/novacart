@@ -89,8 +89,6 @@ jobs:
 
       - name: terraform plan
         id: plan
-        env:
-          TF_VAR_postgres_administrator_password: ${{ secrets.TF_VAR_POSTGRES_ADMINISTRATOR_PASSWORD }}
         run: |
           set +e
           terraform plan -input=false -lock-timeout=5m -no-color \

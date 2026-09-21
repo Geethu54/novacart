@@ -215,14 +215,13 @@ operation (`apply`) that actually writes resources. `ARM_CLIENT_ID` /
 `ARM_TENANT_ID` / `ARM_SUBSCRIPTION_ID` / `ARM_USE_OIDC=true`, set as job-
 level env vars, make it explicit and consistent instead.
 
-`postgres_administrator_password` is a separate concern — a Terraform
-*variable* value, not an Azure credential — and is still a plain GitHub
-Actions secret (`TF_VAR_POSTGRES_ADMINISTRATOR_PASSWORD`) injected as an
-env var, the same way it's handled for a local operator
-(`TF_VAR_postgres_administrator_password`, per
-[infra/azure/README.md](../infra/azure/README.md) and the variable's own
-description in `variables.tf`). OIDC removes the need for a stored *Azure*
-credential; it doesn't remove the need to store this one.
+The Postgres admin password is no longer a stored secret at all in the way
+described above in an earlier version of this doc: Terraform generates it
+(`random_password.postgres_admin` in `main.tf`) and stores it only in the
+dev Key Vault, never as a `TF_VAR_*` / GitHub Actions secret. See
+[secret-and-identity-hardening.md](secret-and-identity-hardening.md) for
+the full picture (what's stored where, how the backend receives it, and
+how it gets rotated without a repo-admin round-trip).
 
 ## Where workflow results and failures are visible
 
@@ -321,9 +320,10 @@ credential; it doesn't remove the need to store this one.
   infrastructure and apply something other than what was actually
   reviewed — re-plan immediately before apply in that case instead of
   trusting an old plan file.
-- **Secrets stored as `TF_VAR_*` still means the Postgres admin password
+- ~~Secrets stored as `TF_VAR_*` still means the Postgres admin password
   passes through GitHub Actions' secret masking, not a real secrets
-  manager.** Fine for a dev database; production should pull this from Key
-  Vault at apply time (see the "before going to production" list in
-  [azure-architecture.md](azure-architecture.md)) rather than from a
-  GitHub secret, so rotation doesn't require a repo-admin round-trip.
+  manager.~~ Addressed: see
+  [secret-and-identity-hardening.md](secret-and-identity-hardening.md) — the
+  password is now Terraform-generated and stored only in Key Vault, with no
+  `TF_VAR_POSTGRES_ADMINISTRATOR_PASSWORD` secret left to leak or rotate
+  through GitHub at all.

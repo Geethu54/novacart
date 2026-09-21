@@ -9,9 +9,9 @@ tags = {
   owner = "devops-cohort"
 }
 
-# Required, no default: set via terraform.tfvars (git-ignored) or
-# TF_VAR_postgres_administrator_password. Never commit a real password.
-# postgres_administrator_password = "REPLACE_ME"
+# No password variable here -- Terraform generates the admin password
+# itself (random_password.postgres_admin in main.tf) and stores it in Key
+# Vault. See Documents/secret-and-identity-hardening.md.
 
 postgres_administrator_login = "novacartadmin"
 postgres_database_name       = "novacart"

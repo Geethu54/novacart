@@ -7,7 +7,13 @@ locals {
   # dashes. Env var names (DATABASE_URL) don't have that restriction, only
   # the secret they point at does, so derive one from the other instead of
   # asking the caller to supply both.
-  secret_names = { for k in keys(var.secret_env_vars) : k => replace(lower(k), "_", "-") }
+  secret_names    = { for k in keys(var.secret_env_vars) : k => replace(lower(k), "_", "-") }
+  kv_secret_names = { for k in keys(var.key_vault_secret_env_vars) : k => replace(lower(k), "_", "-") }
+
+  # compact() drops the null when a caller has no Key Vault secrets (and so
+  # passes key_vault_identity_id = null) -- the identity block below must
+  # never list a null.
+  identity_ids = compact([var.acr_pull_identity_id, var.key_vault_identity_id])
 }
 
 resource "azurerm_container_app" "this" {
@@ -19,8 +25,7 @@ resource "azurerm_container_app" "this" {
 
   identity {
     type         = "UserAssigned"
-    identity_ids = [var.acr_pull_identity_id]
-    
+    identity_ids = local.identity_ids
   }
 
   registry {
@@ -33,6 +38,15 @@ resource "azurerm_container_app" "this" {
     content {
       name  = local.secret_names[secret.key]
       value = secret.value
+    }
+  }
+
+  dynamic "secret" {
+    for_each = var.key_vault_secret_env_vars
+    content {
+      name                = local.kv_secret_names[secret.key]
+      key_vault_secret_id = secret.value
+      identity             = var.key_vault_identity_id
     }
   }
 
@@ -76,6 +90,14 @@ resource "azurerm_container_app" "this" {
         content {
           name        = env.key
           secret_name = local.secret_names[env.key]
+        }
+      }
+
+      dynamic "env" {
+        for_each = var.key_vault_secret_env_vars
+        content {
+          name        = env.key
+          secret_name = local.kv_secret_names[env.key]
         }
       }
     }
