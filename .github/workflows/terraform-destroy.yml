@@ -108,6 +108,7 @@ jobs:
             -var="backend_image_tag=${{ vars.BACKEND_IMAGE_TAG }}" \
             -var="frontend_image_tag=${{ vars.FRONTEND_IMAGE_TAG }}" \
             -var="terraform_apply_identity_object_id=${{ vars.AZURE_APPLY_SP_OBJECT_ID }}" \
+            -var="terraform_plan_identity_object_id=${{ vars.AZURE_PLAN_SP_OBJECT_ID }}" \
             -out=tfplan > plan.txt 2>&1
           code=$?
           cat plan.txt

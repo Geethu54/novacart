@@ -177,3 +177,23 @@ variable "terraform_apply_identity_object_id" {
   type        = string
   default     = null
 }
+
+variable "terraform_plan_identity_object_id" {
+  description = <<-EOT
+    Object ID of the identity that runs a *read-only* `terraform plan` --
+    novacart-github-plan (AZURE_PLAN_SP_OBJECT_ID repo variable) in CI, a
+    developer's own `az login` object ID locally. Granted Get-only on the
+    Key Vault's secrets (see module.key_vault's reader_identity_object_ids
+    below), because `terraform plan` refreshes current resource state --
+    including reading azurerm_key_vault_secret.postgres_connection_string's
+    live value -- before computing a diff, regardless of that resource's
+    `ignore_changes = [value]`. Without this, every plan-only workflow
+    (terraform-plan.yml on PRs, terraform-drift-check.yml, and this
+    environment's own `plan` job in terraform-apply.yml) 403s on that read.
+
+    Defaults to null for the same local single-identity reason as
+    terraform_apply_identity_object_id above.
+  EOT
+  type        = string
+  default     = null
+}
