@@ -85,12 +85,6 @@ variable "postgres_administrator_login" {
   default     = "novacartadmin"
 }
 
-variable "postgres_administrator_password" {
-  description = "Administrator password for the PostgreSQL Flexible Server. Do not commit a real value: pass via TF_VAR_postgres_administrator_password or an untracked *.auto.tfvars file."
-  type        = string
-  sensitive   = true
-}
-
 variable "postgres_version" {
   description = "PostgreSQL major version."
   type        = string

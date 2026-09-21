@@ -63,10 +63,29 @@ variable "env_vars" {
 }
 
 variable "secret_env_vars" {
-  description = "Secret-backed environment variables, name => value (e.g. DATABASE_URL). Stored as Container App secrets and referenced by name from the container's env block, so values never show up as plain env values in the app's spec."
+  description = "Secret-backed environment variables, name => value (e.g. DATABASE_URL). Stored as Container App secrets and referenced by name from the container's env block, so values never show up as plain env values in the app's spec. Prefer key_vault_secret_env_vars when a Key Vault is available -- unlike this map, a Key Vault reference lets the value be rotated without a Terraform apply."
   type        = map(string)
   default     = {}
   sensitive   = true
+}
+
+variable "key_vault_secret_env_vars" {
+  description = <<-EOT
+    Env vars backed by a Key Vault secret reference, name => the secret's
+    versionless Key Vault URI (e.g. azurerm_key_vault_secret.foo.versionless_id).
+    Azure resolves these at runtime via key_vault_identity_id, always
+    fetching the current value -- so rotating the underlying Key Vault
+    secret takes effect on the app's next revision restart, with no
+    Terraform apply or source change involved. Requires key_vault_identity_id.
+  EOT
+  type        = map(string)
+  default     = {}
+}
+
+variable "key_vault_identity_id" {
+  description = "Resource ID of a user-assigned identity already granted Get access on the Key Vault secrets referenced by key_vault_secret_env_vars. Required (non-null) if key_vault_secret_env_vars is non-empty."
+  type        = string
+  default     = null
 }
 
 variable "registry_server" {

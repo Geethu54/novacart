@@ -102,8 +102,6 @@ jobs:
 
       - name: terraform plan -destroy
         id: plan
-        env:
-          TF_VAR_postgres_administrator_password: ${{ secrets.TF_VAR_POSTGRES_ADMINISTRATOR_PASSWORD }}
         run: |
           set +e
           terraform plan -destroy -input=false -lock-timeout=5m -no-color -detailed-exitcode \

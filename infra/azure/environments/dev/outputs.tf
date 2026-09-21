@@ -77,3 +77,13 @@ output "backend_internal_fqdn" {
   description = "Internal-only FQDN of the backend Container App. Reachable from other apps in the same Container Apps Environment (the frontend's nginx proxy) but not from the public internet."
   value       = module.backend_app.fqdn
 }
+
+output "key_vault_name" {
+  description = <<-EOT
+    Name of the dev Key Vault holding postgres-connection-string. Needed to
+    rotate it: `az keyvault secret set --vault-name <this> --name
+    postgres-connection-string --value <new-url>`. See "Secret rotation" in
+    Documents/secret-and-identity-hardening.md.
+  EOT
+  value       = module.key_vault.name
+}

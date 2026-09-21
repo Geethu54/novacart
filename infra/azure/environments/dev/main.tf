@@ -29,6 +29,40 @@ resource "random_string" "acr_suffix" {
   upper   = false
 }
 
+# Key Vault names are globally unique too -- same treatment again. A fresh
+# suffix on every from-scratch rebuild also means a soft-deleted vault left
+# behind by `terraform destroy` (see module.key_vault's purge_protection
+# comment) never collides with the next apply's vault name.
+resource "random_string" "keyvault_suffix" {
+  length  = 6
+  special = false
+  upper   = false
+}
+
+# Resolves to whichever identity is actually running Terraform (the apply
+# SP in CI, a developer's `az login` session locally) -- used to grant that
+# identity secret-management access on the Key Vault this module creates,
+# without hardcoding an object ID.
+data "azurerm_client_config" "current" {}
+
+# Generated instead of accepted as an input: removes an entire
+# human-managed plaintext secret (the old postgres_administrator_password
+# variable / TF_VAR_POSTGRES_ADMINISTRATOR_PASSWORD GitHub secret) from the
+# picture. See "Secret rotation" in Documents/secret-and-identity-hardening.md
+# for how this gets rotated later without touching Terraform state or code.
+resource "random_password" "postgres_admin" {
+  length      = 24
+  special     = true
+  min_upper   = 2
+  min_lower   = 2
+  min_numeric = 2
+  min_special = 2
+  # Flexible Server rejects some special characters in the admin password
+  # (quotes, '@', '/', backslash among them) -- restrict to a set known to
+  # be accepted rather than discovering a rejection at apply time.
+  override_special = "!#$%&*()-_=+[]{}<>:?"
+}
+
 module "resource_group" {
   source = "../../modules/resource_group"
 
@@ -85,7 +119,7 @@ module "postgresql" {
   resource_group_name = module.resource_group.name
 
   administrator_login    = var.postgres_administrator_login
-  administrator_password = var.postgres_administrator_password
+  administrator_password = random_password.postgres_admin.result
 
   postgres_version = var.postgres_version
   sku_name         = var.postgres_sku_name
@@ -123,7 +157,48 @@ module "container_registry" {
 locals {
   # Postgres requires TLS for public connections; psycopg (used by the
   # backend, see backend/app/main.py) reads a standard libpq connection URL.
-  backend_database_url = "postgresql://${var.postgres_administrator_login}:${var.postgres_administrator_password}@${module.postgresql.server_fqdn}:5432/${module.postgresql.database_name}?sslmode=require"
+  backend_database_url = "postgresql://${var.postgres_administrator_login}:${random_password.postgres_admin.result}@${module.postgresql.server_fqdn}:5432/${module.postgresql.database_name}?sslmode=require"
+}
+
+# One identity, Get-only, used solely to resolve the backend's DATABASE_URL
+# Key Vault reference at runtime -- kept separate from acr_pull's identity
+# so a compromise of one grants nothing on the other (least privilege).
+resource "azurerm_user_assigned_identity" "keyvault_reader" {
+  name                = "id-${local.name_prefix}-kv-reader"
+  location            = module.resource_group.location
+  resource_group_name = module.resource_group.name
+  tags                = local.tags
+}
+
+module "key_vault" {
+  source = "../../modules/key_vault"
+
+  name                = "kv${var.project}${var.environment}${random_string.keyvault_suffix.result}"
+  location            = module.resource_group.location
+  resource_group_name = module.resource_group.name
+  tenant_id           = data.azurerm_client_config.current.tenant_id
+
+  terraform_identity_object_id = data.azurerm_client_config.current.object_id
+  reader_identity_object_ids = {
+    keyvault_reader = azurerm_user_assigned_identity.keyvault_reader.principal_id
+  }
+
+  tags = local.tags
+}
+
+resource "azurerm_key_vault_secret" "postgres_connection_string" {
+  name         = "postgres-connection-string"
+  value        = local.backend_database_url
+  key_vault_id = module.key_vault.id
+
+  # Set once from Terraform's generated password at creation; ignored on
+  # every apply after that, so an out-of-band rotation (new Postgres
+  # password + a matching `az keyvault secret set`) isn't reverted by the
+  # next unrelated apply. See "Secret rotation" in
+  # Documents/secret-and-identity-hardening.md.
+  lifecycle {
+    ignore_changes = [value]
+  }
 }
 
 # Created (and granted AcrPull) before either Container App exists, and
@@ -155,6 +230,7 @@ module "backend_app" {
   container_app_environment_id = module.container_apps_environment.id
   registry_server              = module.container_registry.login_server
   acr_pull_identity_id         = azurerm_user_assigned_identity.acr_pull.id
+  key_vault_identity_id        = azurerm_user_assigned_identity.keyvault_reader.id
 
   image       = "${module.container_registry.login_server}/novacart-backend:${var.backend_image_tag}"
   target_port = 8000
@@ -168,13 +244,21 @@ module "backend_app" {
     APP_ENV = var.environment
   }
 
-  secret_env_vars = {
-    DATABASE_URL = local.backend_database_url
+  # Resolved from Key Vault at runtime rather than passed as a flat value --
+  # see azurerm_key_vault_secret.postgres_connection_string's comment for
+  # why, and "Secret rotation" in Documents/secret-and-identity-hardening.md.
+  key_vault_secret_env_vars = {
+    DATABASE_URL = azurerm_key_vault_secret.postgres_connection_string.versionless_id
   }
 
   tags = local.tags
 
-  depends_on = [azurerm_role_assignment.acr_pull]
+  # acr_pull: the pull-identity role assignment (see its own comment above).
+  # module.key_vault: the keyvault_reader identity's access policy is a
+  # sibling resource inside this module, invisible to Terraform's automatic
+  # graph from the key_vault_secret_env_vars reference alone (that reference
+  # only proves the *secret* exists, not that keyvault_reader can read it).
+  depends_on = [azurerm_role_assignment.acr_pull, module.key_vault]
 }
 
 module "frontend_app" {
