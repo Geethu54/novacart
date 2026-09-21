@@ -100,6 +100,13 @@ jobs:
             -backend-config="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
             -backend-config="client_id=${{ secrets.AZURE_CLIENT_ID_PLAN }}"
 
+      # terraform_apply_identity_object_id: this job plans as the PLAN
+      # identity but the apply job below applies this exact saved plan as
+      # the APPLY identity -- data.azurerm_client_config.current would
+      # resolve (and freeze into the plan) the PLAN identity's object ID,
+      # not APPLY's, so the Key Vault access policy for "whoever runs
+      # apply" would end up granted to the wrong principal. Passed
+      # explicitly instead. See its description in environments/dev/variables.tf.
       - name: terraform plan
         id: plan
         run: |
@@ -107,6 +114,7 @@ jobs:
           terraform plan -input=false -lock-timeout=5m -no-color -detailed-exitcode \
             -var="backend_image_tag=${{ inputs.backend_image_tag || vars.BACKEND_IMAGE_TAG }}" \
             -var="frontend_image_tag=${{ inputs.frontend_image_tag || vars.FRONTEND_IMAGE_TAG }}" \
+            -var="terraform_apply_identity_object_id=${{ vars.AZURE_APPLY_SP_OBJECT_ID }}" \
             -out=tfplan > plan.txt 2>&1
           code=$?
           cat plan.txt

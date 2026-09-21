@@ -23,8 +23,22 @@ Postgres has no public endpoint) — read those for the surrounding context.
 | `AZURE_CLIENT_ID_PLAN` / `_APPLY` / `_IMAGES` | Which Azure AD app registration a workflow authenticates as | GitHub Actions secrets. `_APPLY` specifically is scoped to the `dev-infra` **environment**, not the repo — only injectable into a job targeting that environment, i.e. one that's already passed (or is sitting behind) the required-reviewer gate. | Low — a client ID is a GUID, not a bearer credential; OIDC means there's no client *secret* to go with it. Stored as secrets anyway, out of caution, not necessity. |
 | `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID` | Which tenant/subscription to authenticate against | GitHub Actions (repo-level) secrets | Not sensitive on their own; stored as secrets mostly for consistency with the client IDs above |
 | `REPO_VARS_PAT` | A fine-grained PAT, scoped to this repo only, `Variables: Read and write` and nothing else | GitHub Actions (repo-level) secret | Yes — a real bearer credential. Whoever holds it can set/read this repo's Actions variables, nothing more (can't touch code, secrets, or Azure). |
-| Repo variables (`ACR_LOGIN_SERVER`, `BACKEND_IMAGE_TAG`, `FRONTEND_IMAGE_TAG`, `TF_STATE_*`, `AZURE_PLAN_SP_OBJECT_ID`\*, `AZURE_IMAGES_SP_OBJECT_ID`\*) | Nothing — these are non-secret identifiers/config | GitHub Actions repo variables (plaintext by design, not secrets) | No |
+| Repo variables (`ACR_LOGIN_SERVER`, `BACKEND_IMAGE_TAG`, `FRONTEND_IMAGE_TAG`, `TF_STATE_*`, `AZURE_APPLY_SP_OBJECT_ID`, `AZURE_PLAN_SP_OBJECT_ID`\*, `AZURE_IMAGES_SP_OBJECT_ID`\*) | Nothing — these are non-secret identifiers/config | GitHub Actions repo variables (plaintext by design, not secrets) | No |
 | Terraform state | The Postgres password and the Key Vault secret's *initial* value, in plaintext | `devnovacarttfstate01` storage account, `tfstate` container, `novacart-dev.tfstate` blob | Yes — see the caveat immediately below |
+
+`AZURE_APPLY_SP_OBJECT_ID` (`novacart-github-apply`'s object ID, not its
+client/application ID — the two are different Azure AD identifiers) is
+actively read: every `terraform plan` invocation across the four
+`terraform-*.yml` workflows passes it as
+`-var="terraform_apply_identity_object_id=..."`. It exists because
+`data.azurerm_client_config.current.object_id` can't stand in for it here
+— see `terraform_apply_identity_object_id`'s description in
+[`environments/dev/variables.tf`](../infra/azure/environments/dev/variables.tf)
+for why the plan/apply identity split specifically breaks that data
+source, and the Key Vault access-policy row below for what using it
+without this variable actually did in production (granted the wrong
+principal `Get` on the vault's secrets, so the *real* apply identity got a
+403 reading the very secret Terraform had just told it to check).
 
 \* `AZURE_PLAN_SP_OBJECT_ID`/`AZURE_IMAGES_SP_OBJECT_ID` were added, then
 reverted, during a design discussion about Terraform-managing IAM role

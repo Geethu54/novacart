@@ -178,7 +178,9 @@ module "key_vault" {
   resource_group_name = module.resource_group.name
   tenant_id           = data.azurerm_client_config.current.tenant_id
 
-  terraform_identity_object_id = data.azurerm_client_config.current.object_id
+  # See terraform_apply_identity_object_id's description (variables.tf) for
+  # why this can't just be data.azurerm_client_config.current.object_id.
+  terraform_identity_object_id = coalesce(var.terraform_apply_identity_object_id, data.azurerm_client_config.current.object_id)
   reader_identity_object_ids = {
     keyvault_reader = azurerm_user_assigned_identity.keyvault_reader.principal_id
   }
