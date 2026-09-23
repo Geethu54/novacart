@@ -1,0 +1,142 @@
+name: Image Deploy (az cli, dev)
+
+# Alternative, faster path to Azure DEV: deploys the image tags that
+# image-release.yml already built and pushed to ACR straight to the
+# Container Apps via `az containerapp update`, gated by a required reviewer
+# on the `dev-deploy` environment instead of going through
+# terraform-apply.yml's plan/approve/apply cycle.
+#
+# Deliberately a separate pipeline -- does not modify image-release.yml or
+# terraform-apply.yml. It does rely on one Terraform change:
+# infra/azure/modules/container_app/main.tf now has
+# `lifecycle { ignore_changes = [template[0].container[0].image] }`, so
+# Terraform no longer manages either Container App's `image` field -- a
+# later, unrelated `terraform apply` will NOT revert what this workflow
+# deploys. The cost of that: `terraform plan`/`show` never reflects the
+# image actually running, and a brand-new environment built from this module
+# still needs an explicit first deploy through this pipeline (or a manual
+# `az containerapp update`) after its first `terraform apply`, since nothing
+# updates that field again afterward. See the comment on that `lifecycle`
+# block, and Documents/automated-azure-deployment.md ("Why this doesn't just
+# call `az containerapp update`") for the tradeoff this used to avoid.
+#
+# One-time setup this workflow needs, not created by adding this file --
+# see the bottom of this file for the exact commands.
+
+on:
+  workflow_run:
+    workflows: ["Image Release (Build, Publish, Deploy to Dev)"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      backend_image_tag:
+        description: "Backend image tag to deploy (defaults to the BACKEND_IMAGE_TAG repo variable)"
+        required: false
+        type: string
+      frontend_image_tag:
+        description: "Frontend image tag to deploy (defaults to the FRONTEND_IMAGE_TAG repo variable)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serialize, don't cancel -- an in-progress `az containerapp update` must
+  # never be killed mid-change, same reasoning as terraform-apply.yml's
+  # apply job.
+  group: image-deploy-cli-dev
+  cancel-in-progress: false
+
+env:
+  # Follows the naming convention in infra/azure/environments/dev/locals.tf
+  # ("<abbrev>-<project>-<environment>") for the fixed project/environment
+  # values in terraform.tfvars (novacart/dev). Update these if either ever
+  # changes.
+  RESOURCE_GROUP: rg-novacart-dev
+  BACKEND_APP_NAME: ca-novacart-dev-backend
+  FRONTEND_APP_NAME: ca-novacart-dev-frontend
+
+jobs:
+  deploy:
+    name: az containerapp update (dev)
+    runs-on: ubuntu-latest
+    # workflow_run fires on every conclusion (success, failure, cancelled) --
+    # only proceed for a successful image build, or for a manual dispatch.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    environment: dev-deploy # <- add a required reviewer here (Settings > Environments), same mechanism as dev-infra
+    permissions:
+      id-token: write # azure/login's OIDC federated token exchange
+      contents: read
+    steps:
+      - name: Resolve image tags
+        run: |
+          echo "BACKEND_IMAGE_TAG=${{ inputs.backend_image_tag || vars.BACKEND_IMAGE_TAG }}" >> "$GITHUB_ENV"
+          echo "FRONTEND_IMAGE_TAG=${{ inputs.frontend_image_tag || vars.FRONTEND_IMAGE_TAG }}" >> "$GITHUB_ENV"
+
+      # Needs Container Apps write access, not just AcrPush -- this is a new
+      # identity, narrower than a general Contributor grant but broader than
+      # the "images" identity in Documents/automated-azure-deployment.md,
+      # which deliberately cannot touch Container Apps at all. See the
+      # bootstrapping commands at the bottom of this file.
+      - name: Azure login (OIDC, container app write)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID_DEPLOY }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy backend
+        run: |
+          az containerapp update \
+            --name "$BACKEND_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "${{ vars.ACR_LOGIN_SERVER }}/novacart-backend:${{ env.BACKEND_IMAGE_TAG }}"
+
+      - name: Deploy frontend
+        run: |
+          az containerapp update \
+            --name "$FRONTEND_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "${{ vars.ACR_LOGIN_SERVER }}/novacart-frontend:${{ env.FRONTEND_IMAGE_TAG }}"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed to dev via az cli"
+            echo ""
+            echo "| App | Tag |"
+            echo "|---|---|"
+            echo "| \`novacart-backend\` | \`$BACKEND_IMAGE_TAG\` |"
+            echo "| \`novacart-frontend\` | \`$FRONTEND_IMAGE_TAG\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+# --- One-time setup this workflow needs (nothing here creates these) ---
+#
+# 1. GitHub Environment `dev-deploy` with a required reviewer configured:
+#    Settings > Environments > New environment, same as `dev-infra`.
+#
+# 2. A new Azure AD app registration/identity with Container Apps write
+#    access, federated for this repo the same way as the "images" identity
+#    documented in Documents/automated-azure-deployment.md:
+#
+#      az ad app create --display-name novacart-deploy-ci
+#      APP_ID=$(az ad app list --display-name novacart-deploy-ci --query '[0].appId' -o tsv)
+#      az ad sp create --id "$APP_ID"
+#      az ad app federated-credential create --id "$APP_ID" --parameters '{
+#        "name": "novacart-main-push",
+#        "issuer": "https://token.actions.githubusercontent.com",
+#        "subject": "repo:<org>/novacart:ref:refs/heads/main",
+#        "audiences": ["api://AzureADTokenExchange"]
+#      }'
+#      az role assignment create --assignee "$APP_ID" \
+#        --role "Container Apps Contributor" \
+#        --scope "$(az containerapp show -n ca-novacart-dev-backend -g rg-novacart-dev --query id -o tsv)"
+#      az role assignment create --assignee "$APP_ID" \
+#        --role "Container Apps Contributor" \
+#        --scope "$(az containerapp show -n ca-novacart-dev-frontend -g rg-novacart-dev --query id -o tsv)"
+#
+#    Then set the repo secret AZURE_CLIENT_ID_DEPLOY to this app's client ID.
+#    AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, and the ACR_LOGIN_SERVER /
+#    BACKEND_IMAGE_TAG / FRONTEND_IMAGE_TAG repo variables are reused as-is
+#    from the existing pipelines.

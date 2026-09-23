@@ -24,12 +24,16 @@ name: Image Release (Build, Publish, Deploy to Dev)
 # gate on the `dev-infra` environment.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "backend/**"
-      - "frontend/**"
-      - ".github/workflows/image-release.yml"
+  # push trigger temporarily disabled -- testing the new
+  # image-deploy-cli.yml flow (build -> ACR -> az cli deploy) manually
+  # instead of on every backend/**/frontend/** push. Re-enable once that
+  # flow is validated.
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - "backend/**"
+  #     - "frontend/**"
+  #     - ".github/workflows/image-release.yml"
   workflow_dispatch: {}
   # Manual re-run without a new commit. The `images` identity's federated
   # credential only trusts the `main` ref (see the doc above), so
@@ -136,33 +140,38 @@ jobs:
           gh variable set BACKEND_IMAGE_TAG --repo "${{ github.repository }}" --body "$IMAGE_TAG"
           gh variable set FRONTEND_IMAGE_TAG --repo "${{ github.repository }}" --body "$IMAGE_TAG"
 
-      # Deliberately *not* `az containerapp update --image ...` -- Terraform
-      # owns the Container Apps' image field (infra/azure/environments/dev/
-      # main.tf). Going around it here would drift Terraform state from
-      # reality; the next `terraform apply` would revert the image back to
-      # whatever the state file still remembers. Dispatching the existing
-      # workflow instead reuses its already-reviewed plan -> approve ->
-      # apply gate (`dev-infra` environment) verbatim.
-      - name: Trigger terraform-apply.yml for this tag
-        run: |
-          gh workflow run terraform-apply.yml \
-            --repo "${{ github.repository }}" \
-            --ref main \
-            -f backend_image_tag="$IMAGE_TAG" \
-            -f frontend_image_tag="$IMAGE_TAG"
+      # Deliberately *not* `az containerapp update --image ...` here --
+      # Terraform still owns the Container Apps' `image` field for a
+      # brand-new environment's first apply (infra/azure/modules/
+      # container_app/main.tf), even though it now has
+      # `lifecycle { ignore_changes = [...] }` so it won't fight an
+      # existing app's image afterward. See Documents/automated-azure-deployment.md.
+      #
+      # Dispatch to terraform-apply.yml temporarily disabled -- testing the
+      # new flow where image-deploy-cli.yml (triggered automatically by
+      # this workflow completing, via its `workflow_run` trigger) deploys
+      # the tag below straight to Azure via az cli instead. Re-enable this
+      # step if that flow needs to fall back to the Terraform-gated deploy.
+      # - name: Trigger terraform-apply.yml for this tag
+      #   run: |
+      #     gh workflow run terraform-apply.yml \
+      #       --repo "${{ github.repository }}" \
+      #       --ref main \
+      #       -f backend_image_tag="$IMAGE_TAG" \
+      #       -f frontend_image_tag="$IMAGE_TAG"
 
-      - name: Find the triggered run (for the summary link)
-        id: find_run
-        run: |
-          RUN_URL=""
-          for i in $(seq 1 8); do
-            sleep 3
-            RUN_URL=$(gh run list --repo "${{ github.repository }}" \
-              --workflow=terraform-apply.yml --event=workflow_dispatch \
-              --limit 1 --json url --jq '.[0].url // empty')
-            [ -n "$RUN_URL" ] && break
-          done
-          echo "run_url=$RUN_URL" >> "$GITHUB_OUTPUT"
+      # - name: Find the triggered run (for the summary link)
+      #   id: find_run
+      #   run: |
+      #     RUN_URL=""
+      #     for i in $(seq 1 8); do
+      #       sleep 3
+      #       RUN_URL=$(gh run list --repo "${{ github.repository }}" \
+      #         --workflow=terraform-apply.yml --event=workflow_dispatch \
+      #         --limit 1 --json url --jq '.[0].url // empty')
+      #       [ -n "$RUN_URL" ] && break
+      #     done
+      #     echo "run_url=$RUN_URL" >> "$GITHUB_OUTPUT"
 
       - name: Summary
         run: |
@@ -174,11 +183,7 @@ jobs:
             echo "| \`novacart-backend\` | \`$IMAGE_TAG\` |"
             echo "| \`novacart-frontend\` | \`$IMAGE_TAG\` |"
             echo ""
-            if [ -n "${{ steps.find_run.outputs.run_url }}" ]; then
-              echo "Deploy triggered: ${{ steps.find_run.outputs.run_url }}"
-            else
-              echo "Deploy triggered (run not found automatically -- check the Actions tab for a new \`terraform-apply.yml\` run)."
-            fi
-            echo ""
-            echo "That run still requires \`dev-infra\` environment approval before Azure DEV actually changes -- see Documents/automated-azure-deployment.md."
+            echo "BACKEND_IMAGE_TAG / FRONTEND_IMAGE_TAG repo variables updated to this tag."
+            echo "terraform-apply.yml dispatch is disabled for this test run -- image-deploy-cli.yml"
+            echo "will pick up this tag automatically (its workflow_run trigger) and deploy it via az cli."
           } >> "$GITHUB_STEP_SUMMARY"
