@@ -113,3 +113,15 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "liveness_probe_path" {
+  description = "HTTP path Azure polls to decide whether to restart the container. Keep this cheap and dependency-free (no database calls) -- it answers \"is the process alive,\" not \"can it serve real traffic.\""
+  type        = string
+  default     = "/health"
+}
+
+variable "readiness_probe_path" {
+  description = "HTTP path Azure polls to decide whether to route traffic to this revision. Point this at something that verifies real dependencies (e.g. the database) where the app has one -- it answers \"can this instance actually serve a request right now.\""
+  type        = string
+  default     = "/health"
+}
