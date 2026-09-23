@@ -102,4 +102,18 @@ resource "azurerm_container_app" "this" {
       }
     }
   }
+
+  # Deployment for this field has moved to az-cli-based deploys (see
+  # .github/workflows/image-deploy-cli.yml) rather than Terraform. Without
+  # this, the next unrelated `terraform apply` -- triggered by any other
+  # infra change -- would silently revert the image back to whatever
+  # var.image (backend_image_tag/frontend_image_tag) still says, undoing
+  # that deploy. This also means Terraform's plan/state no longer reflects
+  # the image actually running: a brand-new environment built from this
+  # module still gets var.image on first apply, but nothing here updates it
+  # again after that -- a fresh environment needs an explicit first deploy
+  # via the az-cli pipeline (or a manual `az containerapp update`).
+  lifecycle {
+    ignore_changes = [template[0].container[0].image]
+  }
 }
