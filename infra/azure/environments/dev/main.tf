@@ -255,6 +255,12 @@ module "backend_app" {
   image       = "${module.container_registry.login_server}/novacart-backend:${var.backend_image_tag}"
   target_port = 8000
 
+  # /health never touches the database (cheap, always-up check for "is the
+  # process alive"); /ready runs SELECT 1 against Postgres (verifies the
+  # dependency that actually matters for "can this instance serve traffic").
+  liveness_probe_path  = "/health"
+  readiness_probe_path = "/ready"
+
   # Internal-only: per Documents/azure-architecture.md, the backend is never
   # reached directly from the browser -- only the frontend's nginx proxy
   # reaches it, over the Container Apps Environment's internal DNS.
@@ -294,6 +300,11 @@ module "frontend_app" {
   image       = "${module.container_registry.login_server}/novacart-frontend:${var.frontend_image_tag}"
   target_port = 80
 
+  # nginx has no external dependency of its own to check -- the same cheap
+  # endpoint serves both liveness and readiness. See frontend/nginx.conf.template.
+  liveness_probe_path  = "/healthz"
+  readiness_probe_path = "/healthz"
+
   # Public dev endpoint: this is the app a browser hits.
   external_ingress = true
 
@@ -308,4 +319,24 @@ module "frontend_app" {
   tags = local.tags
 
   depends_on = [azurerm_role_assignment.acr_pull]
+}
+
+# See Documents/observability-foundation.md for the reasoning behind every
+# category, threshold, and severity chosen here.
+module "observability" {
+  source = "../../modules/observability"
+
+  name_prefix                = local.name_prefix
+  location                   = module.resource_group.location
+  resource_group_name        = module.resource_group.name
+  log_analytics_workspace_id = module.log_analytics.id
+  container_registry_id      = module.container_registry.id
+  postgres_server_id         = module.postgresql.server_id
+
+  backend_app_id    = module.backend_app.id
+  backend_app_name  = module.backend_app.name
+  frontend_app_id   = module.frontend_app.id
+  frontend_app_name = module.frontend_app.name
+
+  tags = local.tags
 }

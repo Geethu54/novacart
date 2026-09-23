@@ -4,7 +4,17 @@ server {
  
     root /usr/share/nginx/html;
     index index.html;
- 
+
+    # Liveness/readiness probe target (see infra/azure/modules/container_app)
+    # -- deliberately not index.html: a static-file check would still pass
+    # if nginx's config were broken in a way that only affects the /api/
+    # proxy, and it costs a disk read on every probe for no reason.
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
     # Forward any /api/* request to the backend.
     # BACKEND_INTERNAL_URL is substituted at container startup by nginx's
     # built-in envsubst-on-templates entrypoint hook (see Dockerfile).

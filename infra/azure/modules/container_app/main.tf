@@ -100,6 +100,29 @@ resource "azurerm_container_app" "this" {
           secret_name = local.kv_secret_names[env.key]
         }
       }
+
+      # Without these, Azure falls back to a bare TCP-connect check on
+      # target_port -- it confirms the process is listening, not that it
+      # can actually serve a request (e.g. a backend whose DB connection
+      # pool is dead would still pass a TCP check forever).
+      liveness_probe {
+        transport               = "HTTP"
+        port                    = var.target_port
+        path                    = var.liveness_probe_path
+        interval_seconds        = 30
+        timeout                 = 5
+        failure_count_threshold = 3
+      }
+
+      readiness_probe {
+        transport                = "HTTP"
+        port                     = var.target_port
+        path                     = var.readiness_probe_path
+        interval_seconds         = 10
+        timeout                  = 5
+        success_count_threshold  = 1
+        failure_count_threshold  = 3
+      }
     }
   }
 
