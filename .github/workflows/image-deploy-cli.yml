@@ -58,22 +58,56 @@ env:
   FRONTEND_APP_NAME: ca-novacart-dev-frontend
 
 jobs:
-  deploy:
-    name: az containerapp update (dev)
+  # Ungated on purpose: resolves and publishes the tags before anyone is
+  # asked to approve anything, so a reviewer opening this run's summary
+  # can see exactly what would be deployed *before* clicking approve on
+  # the `deploy` job below -- same shape as terraform-apply.yml's
+  # ungated `plan` job feeding its gated `apply` job. If tag resolution
+  # lived inside the gated job instead, the reviewer would be approving
+  # blind (the job, and its "what tag am I deploying" step, doesn't even
+  # run until after approval).
+  resolve-tags:
+    name: resolve image tags to deploy
     runs-on: ubuntu-latest
     # workflow_run fires on every conclusion (success, failure, cancelled) --
     # only proceed for a successful image build, or for a manual dispatch.
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-    environment: dev-deploy # <- add a required reviewer here (Settings > Environments), same mechanism as dev-infra
+    outputs:
+      backend_tag: ${{ steps.resolve.outputs.backend_tag }}
+      frontend_tag: ${{ steps.resolve.outputs.frontend_tag }}
+    steps:
+      - name: Resolve image tags
+        id: resolve
+        run: |
+          BACKEND_TAG="${{ inputs.backend_image_tag || vars.BACKEND_IMAGE_TAG }}"
+          FRONTEND_TAG="${{ inputs.frontend_image_tag || vars.FRONTEND_IMAGE_TAG }}"
+          echo "backend_tag=$BACKEND_TAG" >> "$GITHUB_OUTPUT"
+          echo "frontend_tag=$FRONTEND_TAG" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Pending deploy to dev -- awaiting dev-deploy approval"
+            echo ""
+            echo "| App | Tag |"
+            echo "|---|---|"
+            echo "| \`novacart-backend\` | \`$BACKEND_TAG\` |"
+            echo "| \`novacart-frontend\` | \`$FRONTEND_TAG\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The approval gate. Nothing runs here until a dev-deploy reviewer
+  # approves this job specifically (Settings > Environments > dev-deploy
+  # > required reviewers) -- by then they've already seen exactly which
+  # tags are queued, from resolve-tags' summary above.
+  deploy:
+    name: az containerapp update (dev)
+    needs: resolve-tags
+    runs-on: ubuntu-latest
+    environment: dev-deploy
     permissions:
       id-token: write # azure/login's OIDC federated token exchange
       contents: read
+    env:
+      BACKEND_IMAGE_TAG: ${{ needs.resolve-tags.outputs.backend_tag }}
+      FRONTEND_IMAGE_TAG: ${{ needs.resolve-tags.outputs.frontend_tag }}
     steps:
-      - name: Resolve image tags
-        run: |
-          echo "BACKEND_IMAGE_TAG=${{ inputs.backend_image_tag || vars.BACKEND_IMAGE_TAG }}" >> "$GITHUB_ENV"
-          echo "FRONTEND_IMAGE_TAG=${{ inputs.frontend_image_tag || vars.FRONTEND_IMAGE_TAG }}" >> "$GITHUB_ENV"
-
       # Needs Container Apps write access, not just AcrPush -- this is a new
       # identity, narrower than a general Contributor grant but broader than
       # the "images" identity in Documents/automated-azure-deployment.md,
@@ -118,7 +152,16 @@ jobs:
 #
 # 2. A new Azure AD app registration/identity with Container Apps write
 #    access, federated for this repo the same way as the "images" identity
-#    documented in Documents/automated-azure-deployment.md:
+#    documented in Documents/automated-azure-deployment.md -- PLUS a second
+#    federated credential, because both jobs above now run under the
+#    `dev-deploy` GitHub Environment (`deploy` directly; `resolve-tags`
+#    doesn't, but every job in this workflow shares one identity). A job
+#    gated by an Environment presents a *different* OIDC subject than a
+#    plain branch push -- on this account specifically, the immutable
+#    owner/repo-ID form (`repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:<name>`),
+#    not the plain-name form. Get the exact string from a failed run's
+#    "AADSTS700213: No matching federated identity record..." error if it
+#    ever changes (e.g. after a repo transfer/rename):
 #
 #      az ad app create --display-name novacart-deploy-ci
 #      APP_ID=$(az ad app list --display-name novacart-deploy-ci --query '[0].appId' -o tsv)
@@ -127,6 +170,12 @@ jobs:
 #        "name": "novacart-main-push",
 #        "issuer": "https://token.actions.githubusercontent.com",
 #        "subject": "repo:<org>/novacart:ref:refs/heads/main",
+#        "audiences": ["api://AzureADTokenExchange"]
+#      }'
+#      az ad app federated-credential create --id "$APP_ID" --parameters '{
+#        "name": "novacart-dev-deploy-environment",
+#        "issuer": "https://token.actions.githubusercontent.com",
+#        "subject": "repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:dev-deploy",
 #        "audiences": ["api://AzureADTokenExchange"]
 #      }'
 #      az role assignment create --assignee "$APP_ID" \
