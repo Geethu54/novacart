@@ -158,6 +158,15 @@ resource "azurerm_monitor_metric_alert" "no_replicas" {
 # middleware and the explicit event=... log lines in backend/app/main.py)
 # are the only place in this system that carries request-level meaning.
 
+# Table is ContainerAppConsoleLogs_CL, not ContainerAppConsoleLogs -- despite
+# what Log Analytics' schema browser shows for the latter (a valid-looking
+# but always-empty built-in schema definition), Container Apps actually
+# lands data in the custom-log variant, with the classic _CL/_s column
+# suffixes. Confirmed against real ingested rows, not just the schema:
+#   az monitor log-analytics query -w <workspace-customer-id> --timespan P7D \
+#     --analytics-query 'search * | summarize count() by Type'
+# If this ever needs re-verifying (e.g. Azure changes the ingestion path),
+# that command is the fastest way to see which table name is actually live.
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "backend_elevated_5xx" {
   name                 = "alert-${var.name_prefix}-backend-elevated-5xx"
   resource_group_name  = var.resource_group_name
@@ -170,7 +179,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "backend_elevated_5xx"
 
   criteria {
     query = <<-KQL
-      ContainerAppConsoleLogs
+      ContainerAppConsoleLogs_CL
       | where ContainerAppName_s == "${var.backend_app_name}"
       | where Log_s matches regex @"status_code=5\d\d"
     KQL
@@ -199,7 +208,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "backend_unhealthy" {
 
   criteria {
     query = <<-KQL
-      ContainerAppConsoleLogs
+      ContainerAppConsoleLogs_CL
       | where ContainerAppName_s == "${var.backend_app_name}"
       | where Log_s contains "event=readiness_failed" or Log_s contains "event=startup_failed"
     KQL
